@@ -134,7 +134,7 @@ module atm_time_integration
    subroutine mpas_atm_dynamics_checks(dminfo, blockList, streamManager, ierr)
 
        use mpas_log, only : mpas_log_write
-       use mpas_derived_types, only : dm_info, block_type, MPAS_LOG_WARN
+       use mpas_derived_types, only : dm_info, block_type, MPAS_LOG_WARN, MPAS_LOG_ERR
        use mpas_pool_routines, only : mpas_pool_get_config
 
        implicit none
@@ -146,7 +146,11 @@ module atm_time_integration
 
        logical, pointer :: config_positive_definite
        real (kind=RKIND), pointer :: config_epssm
+       integer, pointer :: config_num_passive_tracers
+       logical, pointer :: config_split_dynamics_transport, config_apply_lbcs
 
+
+       ierr = 0
 
        call mpas_log_write('')
        call mpas_log_write('Checking consistency of dynamics settings...')
@@ -200,10 +204,31 @@ module atm_time_integration
            end if
        end if
 
+       !
+       ! Check that passive tracers are only used in configurations where they are implemented
+       !
+       call mpas_pool_get_config(blocklist % configs, 'config_num_passive_tracers', config_num_passive_tracers)
+       if (config_num_passive_tracers > 0) then
+           call mpas_pool_get_config(blocklist % configs, 'config_split_dynamics_transport', config_split_dynamics_transport)
+           call mpas_pool_get_config(blocklist % configs, 'config_apply_lbcs', config_apply_lbcs)
+           if (.not. config_split_dynamics_transport) then
+               call mpas_log_write('Passive tracers require config_split_dynamics_transport = true.', &
+                                   messageType=MPAS_LOG_ERR)
+               ierr = 1
+           end if
+           if (config_apply_lbcs) then
+               call mpas_log_write('Passive tracers are not yet supported in limited-area simulations.', &
+                                   messageType=MPAS_LOG_ERR)
+               ierr = 1
+           end if
+#ifdef MPAS_OPENACC
+           call mpas_log_write('Passive tracers are not yet supported in OpenACC builds.', messageType=MPAS_LOG_ERR)
+           ierr = 1
+#endif
+       end if
+
        call mpas_log_write(' ----- done checking dynamics settings -----')
        call mpas_log_write('')
-
-       ierr = 0
 
    end subroutine mpas_atm_dynamics_checks
 
@@ -1924,6 +1949,8 @@ module atm_time_integration
       real (kind=RKIND), dimension(:,:), pointer :: w
       real (kind=RKIND), dimension(:,:), pointer :: u, uReconstructZonal, uReconstructMeridional, uReconstructX, uReconstructY, uReconstructZ
       real (kind=RKIND), dimension(:,:,:), pointer :: scalars, scalars_1, scalars_2
+      real (kind=RKIND), dimension(:,:,:), pointer :: passive_tracers_1, passive_tracers_2
+      integer, pointer :: config_num_passive_tracers
 
       real (kind=RKIND), dimension(:,:), pointer :: rqvdynten, rthdynten, theta_m
       real (kind=RKIND), dimension(:,:), pointer :: pressure_p, rtheta_p, exner, tend_u
@@ -1947,6 +1974,7 @@ module atm_time_integration
       call mpas_pool_get_config(block % configs, 'config_scalar_advection', config_scalar_advection)
       call mpas_pool_get_config(block % configs, 'config_positive_definite', config_positive_definite)
       call mpas_pool_get_config(block % configs, 'config_monotonic', config_monotonic)
+      call mpas_pool_get_config(block % configs, 'config_num_passive_tracers', config_num_passive_tracers)
       call mpas_pool_get_config(block % configs, 'config_gpu_aware_mpi', config_gpu_aware_mpi)
       call mpas_pool_get_config(block % configs, 'config_IAU_option', config_IAU_option)
       !  config variables for dynamics-transport splitting, WCS 18 November 2014
@@ -2679,11 +2707,30 @@ module atm_time_integration
          !  switch for 2nd order time integration for scalar transport
          if(config_time_integration_order == 2) rk_timestep(1) = dt/2.
 
+         !
+         ! Passive tracers are not touched by the dynamics: refresh the halo of time level 1,
+         ! then copy it to time level 2, from which the RK3 transport computes its fluxes
+         !
+         if (config_num_passive_tracers > 0) then
+            call exchange_halo_group(domain, 'dynamics:passive_tracers_old', config_gpu_aware_mpi)
+            call mpas_pool_get_array(state, 'passive_tracers', passive_tracers_1, 1)
+            call mpas_pool_get_array(state, 'passive_tracers', passive_tracers_2, 2)
+            passive_tracers_2(:,:,:) = passive_tracers_1(:,:,:)
+         end if
+
          RK3_SPLIT_TRANSPORT : do rk_step = 1, 3  ! Runge-Kutta loop
 
 
             call advance_scalars('scalars', domain, rk_step, rk_timestep, config_monotonic, config_positive_definite, &
                                  config_time_integration_order, config_split_dynamics_transport, config_gpu_aware_mpi, exchange_halo_group)
+
+            if (config_num_passive_tracers > 0) then
+               call mpas_timer_start('passive_tracer_transport')
+               call advance_scalars('passive_tracers', domain, rk_step, rk_timestep, config_monotonic, config_positive_definite, &
+                                    config_time_integration_order, config_split_dynamics_transport, config_gpu_aware_mpi, &
+                                    exchange_halo_group)
+               call mpas_timer_stop('passive_tracer_transport')
+            end if
 
             if (config_apply_lbcs) then  ! adjust boundary tendencies for regional_MPAS scalar transport
 
@@ -2725,6 +2772,10 @@ module atm_time_integration
                call exchange_halo_group(domain, 'dynamics:scalars', config_gpu_aware_mpi)
                !$acc update device(scalars_2) if (.not. config_gpu_aware_mpi)
                MPAS_ACC_TIMER_STOP('atm_srk3: halo_exchanges + ACC_data_xfer')
+            end if
+
+            if (rk_step < 3 .and. config_num_passive_tracers > 0) then
+               call exchange_halo_group(domain, 'dynamics:passive_tracers', config_gpu_aware_mpi)
             end if
 
          end do RK3_SPLIT_TRANSPORT

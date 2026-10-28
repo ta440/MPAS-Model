@@ -38,6 +38,8 @@
                      description="The number of first-guess soil layers"/>
                 <dim name="nVertLevelsP1" definition="nVertLevels+1"
                      description="The number of atmospheric levels, always one more than the number of layers"/>
+                <dim name="num_passive_tracers" definition="namelist:config_num_passive_tracers"
+                     description="The number of passive tracers"/>
                 <dim name="nSoilComps" definition="8"
                      description="The number of soil textures as needed as input in the NOAH-MP land surface model"/>
                 <dim name="nGocartLevels" definition="namelist:config_gocartlevels"
@@ -112,6 +114,11 @@
                      units="-"
                      description="The number of vertical levels to be used in the model"
                      possible_values="Positive integer values"/>
+
+                <nml_option name="config_num_passive_tracers"   type="integer"       default_value="0" in_defaults="false"
+                     units="-"
+                     description="The number of passive tracers to initialize (case 2 only); must equal the value used by the model"
+                     possible_values="Non-negative integer values"/>
 
                 <nml_option name="config_nsoillevels"           type="integer"       default_value="4"
                      units="-"
@@ -375,6 +382,8 @@
 <!-- **************************************************************************************** -->
         <packages>
                 <package name="initial_conds" description="Used by test cases that produce initial conditions."/>
+                <package name="passive_tracers_pkg" description="Passive tracers are initialized"
+                         active_when="config_num_passive_tracers > 0"/>
                 <package name="sfc_update" description="Used by test cases that produce surface updates."/>
                 <package name="lbcs" description="Active when lateral boundary conditions are interpolated and written."/>
                 <package name="gwd_stage_in" description="Active only if GWD static fields are be generated and other static fields are not being generated"/>
@@ -600,6 +609,7 @@
                         <var name="t_init" packages="met_stage_out"/>
                         <var name="qv_init" packages="met_stage_out"/>
                         <var_array name="scalars" packages="met_stage_out;mp_thompson_aers_in"/>
+                        <var name="passive_tracers" packages="passive_tracers_pkg"/>
                         <var name="u" packages="met_stage_out"/>
                         <var name="w" packages="met_stage_out"/>
                         <var name="dz" packages="met_stage_out"/>
@@ -1174,6 +1184,10 @@
                         <var name="tke" array_group="turbulence" units="m^2 s^{-2}"
                              description="Turbulent kinetic energy for the prognostic tke LES scheme"/>
                 </var_array>
+
+                <var name="passive_tracers" type="real" dimensions="num_passive_tracers nVertLevels nCells Time"
+                     units="kg kg^{-1}" default_value="0.0" packages="passive_tracers_pkg"
+                     description="Passive tracer mixing ratios"/>
 
                 <!-- Climatology for ocean mixed-layer depth -->
                 <var name="h_oml_initial" type="real" dimensions="nCells Time" units="m"

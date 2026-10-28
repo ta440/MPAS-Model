@@ -32,6 +32,8 @@
                      description="The number of atmospheric layers"/>
                 <dim name="nVertLevelsP1"      definition="nVertLevels+1"
                      description="The number of atmospheric levels, always one more than the number of layers"/>
+                <dim name="num_passive_tracers" definition="namelist:config_num_passive_tracers"
+                     description="The number of passive tracers"/>
 
 #ifdef DO_PHYSICS
                 <dim name="nMonths"            definition="namelist:months"
@@ -245,6 +247,11 @@
                      units="-"
                      description="Upwinding coefficient in the 3rd order advection scheme"
                      possible_values="0 $\leq$ config_coef_3rd_order $\leq$ 1"/>
+
+                <nml_option name="config_num_passive_tracers" type="integer" default_value="0" in_defaults="false"
+                     units="-"
+                     description="Number of passive tracers transported by the scalar transport scheme (0 disables them)"
+                     possible_values="Non-negative integer values"/>
 
                 <nml_option name="config_smagorinsky_coef" type="real" default_value="0.125" in_defaults="false"
                      units="-"
@@ -488,6 +495,9 @@
                 <package name="sfclayer"
                          description="Variables and options associated with surface layer physics"
                          active_when="(trim(config_physics_suite) /= 'none' .and. trim(config_sfclayer_scheme) == 'suite') .or.  any(trim(config_sfclayer_scheme) == [ character(len=StrKind) :: 'sf_monin_obukhov', 'sf_monin_obukhov_rev', 'sf_mynn' ])"/>
+                <package name="passive_tracers_pkg"
+                         description="Passive tracers that are transported but do not affect the dynamics or physics"
+                         active_when="config_num_passive_tracers > 0"/>
         </packages>
 
 
@@ -610,6 +620,7 @@
 			<var name="v_init"/>
 			<var name="t_init"/>
 			<var_array name="scalars"/>
+			<var name="passive_tracers" packages="passive_tracers_pkg"/>
 			<var name="initial_time"/>
 			<var name="xtime"/>
 			<var name="Time"/>
@@ -664,6 +675,7 @@
 			<var name="cell_gradient_coef_y"/>
 #endif
 			<var_array name="scalars"/>
+			<var name="passive_tracers" packages="passive_tracers_pkg"/>
 			<var name="initial_time"/>
 			<var name="xtime"/>
 			<var name="Time"/>
@@ -980,6 +992,7 @@
 			<var name="rho"/>
 			<var name="theta"/>
 			<var_array name="scalars"/>
+			<var name="passive_tracers"/>
 			<var name="relhum"/>
 			<var name="divergence"/>
 			<var name="vorticity"/>
@@ -1748,6 +1761,10 @@
                 </var_array>
 #endif
 
+                <var name="passive_tracers" type="real" dimensions="num_passive_tracers nVertLevels nCells Time"
+                     units="kg kg^{-1}" default_value="0.0" packages="passive_tracers_pkg"
+                     description="Passive tracer mixing ratios; transported, with no effect on the dynamics or physics"/>
+
 #ifdef DO_PHYSICS
                 <var_array name="aerosols" type="real" dimensions="nAerLevels nCells Time">
                         <var name="sul"     array_group="aer_cam" units="kg m^{-3}"
@@ -2114,6 +2131,10 @@
                              packages="les"/>
                 </var_array>
 #endif
+
+                <var name="passive_tracers_tend" type="real" dimensions="num_passive_tracers nVertLevels nCells Time"
+                     units="kg m^{-3} s^{-1}" default_value="0.0" packages="passive_tracers_pkg"
+                     description="Tendency of passive tracer mass per unit volume divided by d(zeta)/dz, from sources other than transport"/>
         </var_struct>
 
         <!-- ===================================================================================== -->

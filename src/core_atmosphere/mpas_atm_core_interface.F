@@ -461,7 +461,9 @@ module atm_core_interface
    function atm_setup_block(block) result(ierr)
 
       use mpas_derived_types, only : block_type
+      use mpas_derived_types, only : mpas_pool_type
       use mpas_pool_routines, only : mpas_pool_get_config
+      use mpas_pool_routines, only : mpas_pool_get_subpool, mpas_pool_add_dimension
       use mpas_log, only : mpas_log_write
 
       implicit none
@@ -471,10 +473,22 @@ module atm_core_interface
 
       integer, pointer :: cam_pcnst
       integer :: err_level
+      integer, pointer :: config_num_passive_tracers
+      type (mpas_pool_type), pointer :: statePool
 
       ierr = 0
 
       call atm_generate_structs(block, block % structs, block % dimensions, block % packages)
+
+      !
+      ! passive_tracers is a plain field rather than a var_array, so the registry does not add
+      ! its num_passive_tracers dimension to the state pool, where advance_scalars looks for it
+      ! (namelist-defined dimensions are not yet set up when this routine runs, so the value
+      ! is taken directly from the namelist option)
+      !
+      call mpas_pool_get_config(block % domain % configs, 'config_num_passive_tracers', config_num_passive_tracers)
+      call mpas_pool_get_subpool(block % structs, 'state', statePool)
+      call mpas_pool_add_dimension(statePool, 'num_passive_tracers', config_num_passive_tracers)
 
       !
       ! When MPAS-A is operating as a dycore in CAM, the scalars/scalars_tend var_arrays are

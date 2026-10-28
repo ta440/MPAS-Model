@@ -1250,7 +1250,101 @@ module init_atm_cases
          end do
       end do
 
+      call init_atm_passive_tracers(mesh, state, configs, nCells)
+
    end subroutine init_atm_case_jw
+
+
+   !-----------------------------------------------------------------------
+   !  routine init_atm_passive_tracers
+   !
+   !> \brief Initialize passive tracers with the standard transport-test shapes
+   !> \details
+   !>  Tracer n is set to shape mod(n-1,4), so that tracers n and n+4 are identical:
+   !>    0: uniform value 1 (consistency with the mass field)
+   !>    1: Gaussian hills      (Lauritzen et al. 2012, GMD, eqs. 7-9)
+   !>    2: cosine bells        (eqs. 10-11)
+   !>    3: slotted cylinders   (eq. 12)
+   !>  The fields are uniform in the vertical. Each shape is a pair of
+   !>  distributions centred at (5pi/6, 0) and (7pi/6, 0).
+   !-----------------------------------------------------------------------
+   subroutine init_atm_passive_tracers(mesh, state, configs, nCells)
+
+      implicit none
+
+      type (mpas_pool_type), intent(inout) :: mesh
+      type (mpas_pool_type), intent(inout) :: state
+      type (mpas_pool_type), intent(in) :: configs
+      integer, intent(in) :: nCells
+
+      integer, pointer :: config_num_passive_tracers
+      real (kind=RKIND), dimension(:,:,:), pointer :: passive_tracers
+      real (kind=RKIND), dimension(:), pointer :: latCell, lonCell
+
+      real (kind=RKIND), parameter :: radius = 0.5_RKIND   ! r/R for bells and cylinders
+      real (kind=RKIND), dimension(2) :: lon_c, lat_c, x_c, y_c, z_c
+      real (kind=RKIND), dimension(0:3) :: tracer_shape
+      real (kind=RKIND) :: x, y, z, r_i, dlon
+      integer :: iCell, itracer, i
+
+      call mpas_pool_get_config(configs, 'config_num_passive_tracers', config_num_passive_tracers)
+      if (config_num_passive_tracers <= 0) return
+
+      call mpas_pool_get_array(state, 'passive_tracers', passive_tracers)
+      call mpas_pool_get_array(mesh, 'latCell', latCell)
+      call mpas_pool_get_array(mesh, 'lonCell', lonCell)
+
+      lon_c(:) = (/ 5.0_RKIND*pii/6.0_RKIND, 7.0_RKIND*pii/6.0_RKIND /)
+      lat_c(:) = 0.0_RKIND
+      do i = 1, 2
+         x_c(i) = cos(lat_c(i)) * cos(lon_c(i))
+         y_c(i) = cos(lat_c(i)) * sin(lon_c(i))
+         z_c(i) = sin(lat_c(i))
+      end do
+
+      do iCell = 1, nCells
+         x = cos(latCell(iCell)) * cos(lonCell(iCell))
+         y = cos(latCell(iCell)) * sin(lonCell(iCell))
+         z = sin(latCell(iCell))
+
+         tracer_shape(0) = 1.0_RKIND
+         tracer_shape(1) = 0.0_RKIND
+         tracer_shape(2) = 0.1_RKIND
+         tracer_shape(3) = 0.1_RKIND
+
+         do i = 1, 2
+            ! Gaussian hills
+            tracer_shape(1) = tracer_shape(1) &
+                              + 0.95_RKIND * exp(-5.0_RKIND * ((x-x_c(i))**2 + (y-y_c(i))**2 + (z-z_c(i))**2))
+
+            ! great-circle distance to centre i, and longitude offset wrapped to [-pi, pi)
+            r_i = acos(max(-1.0_RKIND, min(1.0_RKIND, sin(lat_c(i))*sin(latCell(iCell)) &
+                                         + cos(lat_c(i))*cos(latCell(iCell))*cos(lonCell(iCell)-lon_c(i)))))
+            dlon = modulo(lonCell(iCell) - lon_c(i) + pii, 2.0_RKIND*pii) - pii
+
+            ! cosine bells
+            if (r_i < radius) then
+               tracer_shape(2) = 0.1_RKIND + 0.9_RKIND * 0.5_RKIND * (1.0_RKIND + cos(pii * r_i / radius))
+            end if
+
+            ! slotted cylinders: slot open to the north on cylinder 1, to the south on cylinder 2
+            if (r_i <= radius) then
+               if (abs(dlon) >= radius/6.0_RKIND) then
+                  tracer_shape(3) = 1.0_RKIND
+               else if (i == 1 .and. latCell(iCell) - lat_c(1) < -5.0_RKIND/12.0_RKIND*radius) then
+                  tracer_shape(3) = 1.0_RKIND
+               else if (i == 2 .and. latCell(iCell) - lat_c(2) >  5.0_RKIND/12.0_RKIND*radius) then
+                  tracer_shape(3) = 1.0_RKIND
+               end if
+            end if
+         end do
+
+         do itracer = 1, config_num_passive_tracers
+            passive_tracers(itracer,:,iCell) = tracer_shape(mod(itracer-1, 4))
+         end do
+      end do
+
+   end subroutine init_atm_passive_tracers
 
 
    subroutine init_atm_calc_flux_zonal(u_2d,lat_2d,flux_zonal,lat1_in,lat2_in,dvEdge,a,u0,nz1,nlat)
