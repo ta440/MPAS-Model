@@ -34,6 +34,8 @@
                      description="The number of atmospheric levels, always one more than the number of layers"/>
                 <dim name="num_passive_tracers" definition="namelist:config_num_passive_tracers"
                      description="The number of passive tracers"/>
+                <dim name="fct_block_size" definition="namelist:config_fct_block_size"
+                     description="Number of tracers processed together in the blocked FCT limiter"/>
 
 #ifdef DO_PHYSICS
                 <dim name="nMonths"            definition="namelist:months"
@@ -257,6 +259,10 @@
                      units="-"
                      description="Kinematic transport test: skip the dynamics and prescribe the transport mass fluxes from an analytic flow. `off' runs the full model"
                      possible_values="`off', `lauritzen_nondiv', `lauritzen_div', `dcmip2012_1_2'"/>
+                <nml_option name="config_fct_block_size" type="integer" default_value="0" in_defaults="false"
+                     units="-"
+                     description="Tracers per block in the FCT (monotonic) transport stage; 0 uses the original one-tracer-at-a-time routine"
+                     possible_values="Non-negative integer values"/>
 
                 <nml_option name="config_smagorinsky_coef" type="real" default_value="0.125" in_defaults="false"
                      units="-"
@@ -2227,6 +2233,12 @@
         <var_struct name="halo_scratch" time_levs="1">
                 <var name="scale" type="real" dimensions="nVertLevels TWO nCells" units="-"
                      description="Scaling coefficients for monotonic-limited horizontal fluxes"
+                     persistence="scratch" />
+                <var name="scale_in" type="real" dimensions="fct_block_size nVertLevels nCells" units="-"
+                     description="Incoming-flux scaling coefficients for the blocked FCT limiter"
+                     persistence="scratch" />
+                <var name="scale_out" type="real" dimensions="fct_block_size nVertLevels nCells" units="-"
+                     description="Outgoing-flux scaling coefficients for the blocked FCT limiter"
                      persistence="scratch" />
         </var_struct>
 
