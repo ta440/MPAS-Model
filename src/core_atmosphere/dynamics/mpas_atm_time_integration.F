@@ -148,6 +148,7 @@ module atm_time_integration
        real (kind=RKIND), pointer :: config_epssm
        integer, pointer :: config_num_passive_tracers
        logical, pointer :: config_split_dynamics_transport, config_apply_lbcs
+       character (len=StrKIND), pointer :: config_kinematic_case
 
 
        ierr = 0
@@ -225,6 +226,24 @@ module atm_time_integration
            call mpas_log_write('Passive tracers are not yet supported in OpenACC builds.', messageType=MPAS_LOG_ERR)
            ierr = 1
 #endif
+       end if
+
+       !
+       ! Check the kinematic transport test settings
+       !
+       call mpas_pool_get_config(blocklist % configs, 'config_kinematic_case', config_kinematic_case)
+       if (trim(config_kinematic_case) /= 'off') then
+           call mpas_pool_get_config(blocklist % configs, 'config_split_dynamics_transport', config_split_dynamics_transport)
+           if (trim(config_kinematic_case) /= 'lauritzen_nondiv') then
+               call mpas_log_write('Unknown config_kinematic_case '''//trim(config_kinematic_case)//'''', &
+                                   messageType=MPAS_LOG_ERR)
+               ierr = 1
+           end if
+           if (.not. config_split_dynamics_transport) then
+               call mpas_log_write('Kinematic transport requires config_split_dynamics_transport = true.', &
+                                   messageType=MPAS_LOG_ERR)
+               ierr = 1
+           end if
        end if
 
        call mpas_log_write(' ----- done checking dynamics settings -----')
@@ -1920,6 +1939,9 @@ module atm_time_integration
       logical, pointer :: config_split_dynamics_transport
       integer, pointer :: config_dynamics_split
       integer :: dynamics_substep, dynamics_split
+      character (len=StrKIND), pointer :: config_kinematic_case
+      logical :: kinematic_transport
+      integer :: n_dynamics_substeps
       real (kind=RKIND) :: dt_dynamics
 
       integer, pointer :: config_number_of_sub_steps
@@ -1975,6 +1997,8 @@ module atm_time_integration
       call mpas_pool_get_config(block % configs, 'config_positive_definite', config_positive_definite)
       call mpas_pool_get_config(block % configs, 'config_monotonic', config_monotonic)
       call mpas_pool_get_config(block % configs, 'config_num_passive_tracers', config_num_passive_tracers)
+      call mpas_pool_get_config(block % configs, 'config_kinematic_case', config_kinematic_case)
+      kinematic_transport = (trim(config_kinematic_case) /= 'off')
       call mpas_pool_get_config(block % configs, 'config_gpu_aware_mpi', config_gpu_aware_mpi)
       call mpas_pool_get_config(block % configs, 'config_IAU_option', config_IAU_option)
       !  config variables for dynamics-transport splitting, WCS 18 November 2014
@@ -2203,7 +2227,14 @@ module atm_time_integration
 
 
 
-      DYNAMICS_SUBSTEPS : do dynamics_substep = 1, dynamics_split
+      ! Kinematic transport test: no dynamics; the mass fluxes are prescribed before the transport
+      if (kinematic_transport) then
+         n_dynamics_substeps = 0
+      else
+         n_dynamics_substeps = dynamics_split
+      end if
+
+      DYNAMICS_SUBSTEPS : do dynamics_substep = 1, n_dynamics_substeps
 
          !  Compute the coefficients for the vertically implicit solve in the acoustic step.
          !  These coefficients will work for the first acoustic step in all cases.
@@ -2718,6 +2749,10 @@ module atm_time_integration
             passive_tracers_2(:,:,:) = passive_tracers_1(:,:,:)
          end if
 
+         if (kinematic_transport) then
+            call atm_kinematic_set_fluxes(block, real(itimestep-1,RKIND)*dt, dt, itimestep == 1)
+         end if
+
          RK3_SPLIT_TRANSPORT : do rk_step = 1, 3  ! Runge-Kutta loop
 
 
@@ -2931,6 +2966,134 @@ module atm_time_integration
       call summarize_timestep(domain)
 
    end subroutine atm_srk3
+
+
+   !-----------------------------------------------------------------------
+   !  routine atm_kinematic_set_fluxes
+   !
+   !> \brief Prescribe the transport mass fluxes for a kinematic test case
+   !> \details
+   !>  Lauritzen et al. (2012, GMD) non-divergent deformational flow, eqs. (18)-(20),
+   !>  with T = 12 days and k = 10a/T. The streamfunction is averaged over
+   !>  [t0, t0+dt] with 3-point Gauss-Legendre quadrature at the cell vertices,
+   !>  and the normal flux on each edge is its difference along the edge, so the
+   !>  flux divergence of every cell is zero to roundoff. rho_zz is set to 1 in
+   !>  both time levels and wwAvg to 0, so every level is an independent copy of
+   !>  the 2D problem. With check = .true. the fluxes are compared with the
+   !>  point-sampled analytic normal wind at mid-step, and the run stops if they
+   !>  disagree (for example, a sign error in the edge orientation).
+   !-----------------------------------------------------------------------
+   subroutine atm_kinematic_set_fluxes(block, t0, dt, check)
+
+      implicit none
+
+      type (block_type), intent(inout) :: block
+      real (kind=RKIND), intent(in) :: t0, dt
+      logical, intent(in) :: check
+
+      type (mpas_pool_type), pointer :: mesh, state, diag
+      integer, pointer :: nVertLevels, nEdges, nVertices
+      integer, dimension(:,:), pointer :: verticesOnEdge
+      real (kind=RKIND), dimension(:), pointer :: latVertex, lonVertex, latEdge, lonEdge, angleEdge, dvEdge
+      real (kind=RKIND), dimension(:,:), pointer :: ruAvg, wwAvg, rho_zz_1, rho_zz_2, u_2
+      real (kind=RKIND), pointer :: sphere_radius
+
+      real (kind=RKIND), parameter :: period = 12.0_RKIND * 86400.0_RKIND
+      real (kind=RKIND), dimension(3), parameter :: gl_x = (/ -0.7745966692414834_RKIND, 0.0_RKIND, &
+                                                               0.7745966692414834_RKIND /)
+      real (kind=RKIND), dimension(3), parameter :: gl_w = (/ 5.0_RKIND, 8.0_RKIND, 5.0_RKIND /) / 18.0_RKIND
+
+      real (kind=RKIND), dimension(:), allocatable :: psi
+      real (kind=RKIND) :: a, kdef, t, lamp, un, flux, err_max, un_max
+      integer :: iEdge, iVtx, ig, v1, v2, n_fallback
+
+      call mpas_pool_get_subpool(block % structs, 'mesh', mesh)
+      call mpas_pool_get_subpool(block % structs, 'state', state)
+      call mpas_pool_get_subpool(block % structs, 'diag', diag)
+
+      call mpas_pool_get_dimension(mesh, 'nVertLevels', nVertLevels)
+      call mpas_pool_get_dimension(mesh, 'nEdges', nEdges)
+      call mpas_pool_get_dimension(mesh, 'nVertices', nVertices)
+      call mpas_pool_get_config(mesh, 'sphere_radius', sphere_radius)
+
+      call mpas_pool_get_array(mesh, 'verticesOnEdge', verticesOnEdge)
+      call mpas_pool_get_array(mesh, 'latVertex', latVertex)
+      call mpas_pool_get_array(mesh, 'lonVertex', lonVertex)
+      call mpas_pool_get_array(mesh, 'latEdge', latEdge)
+      call mpas_pool_get_array(mesh, 'lonEdge', lonEdge)
+      call mpas_pool_get_array(mesh, 'angleEdge', angleEdge)
+      call mpas_pool_get_array(mesh, 'dvEdge', dvEdge)
+      call mpas_pool_get_array(diag, 'ruAvg', ruAvg)
+      call mpas_pool_get_array(diag, 'wwAvg', wwAvg)
+      call mpas_pool_get_array(state, 'rho_zz', rho_zz_1, 1)
+      call mpas_pool_get_array(state, 'rho_zz', rho_zz_2, 2)
+      call mpas_pool_get_array(state, 'u', u_2, 2)
+
+      a = sphere_radius
+      kdef = 10.0_RKIND * a / period
+
+      ! Streamfunction (m^2/s) at the vertices, averaged over the step: u = -(1/a) dpsi/dlat, v = (1/(a cos(lat))) dpsi/dlon
+      allocate(psi(nVertices+1))
+      psi(:) = 0.0_RKIND
+      do iVtx = 1, nVertices
+         do ig = 1, 3
+            t = t0 + 0.5_RKIND * dt * (1.0_RKIND + gl_x(ig))
+            lamp = lonVertex(iVtx) - 2.0_RKIND * pii * t / period
+            psi(iVtx) = psi(iVtx) + gl_w(ig) * a * ( kdef * sin(lamp)**2 * cos(latVertex(iVtx))**2 * cos(pii * t / period) &
+                                                     - 2.0_RKIND * pii * a / period * sin(latVertex(iVtx)) )
+         end do
+      end do
+
+      ! Normal flux on each edge. The tangent t = k x n points from verticesOnEdge(1) to verticesOnEdge(2),
+      ! so u.n = (k x grad psi).n = -grad psi . t. Outer-halo edges with a missing vertex use the
+      ! point-sampled wind; they are never used to update owned cells.
+      n_fallback = 0
+      err_max = 0.0_RKIND
+      un_max = 0.0_RKIND
+      do iEdge = 1, nEdges
+         v1 = verticesOnEdge(1,iEdge)
+         v2 = verticesOnEdge(2,iEdge)
+         un = kinematic_normal_wind(latEdge(iEdge), lonEdge(iEdge), angleEdge(iEdge), t0 + 0.5_RKIND*dt, a, kdef, period)
+         if (v1 >= 1 .and. v1 <= nVertices .and. v2 >= 1 .and. v2 <= nVertices) then
+            flux = -(psi(v2) - psi(v1)) / dvEdge(iEdge)
+            err_max = max(err_max, abs(flux - un))
+            un_max = max(un_max, abs(un))
+         else
+            flux = un
+            n_fallback = n_fallback + 1
+         end if
+         ruAvg(1:nVertLevels,iEdge) = flux
+         u_2(1:nVertLevels,iEdge) = flux      ! diagnostic only: rho_zz = 1, so u = ruAvg (step-averaged wind)
+      end do
+      ruAvg(:,nEdges+1) = 0.0_RKIND
+
+      wwAvg(:,:) = 0.0_RKIND
+      rho_zz_1(:,:) = 1.0_RKIND
+      rho_zz_2(:,:) = 1.0_RKIND
+
+      if (check) then
+         call mpas_log_write('Kinematic fluxes: max |u.n| = $r m/s, max |psi flux - point wind| = $r m/s, fallback edges = $i', &
+                             realArgs=(/un_max, err_max/), intArgs=(/n_fallback/))
+         if (err_max > 0.1_RKIND * un_max) then
+            call mpas_log_write('Kinematic fluxes disagree with the analytic wind; check the edge orientation.', &
+                                messageType=MPAS_LOG_CRIT)
+         end if
+      end if
+
+      deallocate(psi)
+
+   contains
+
+      real (kind=RKIND) function kinematic_normal_wind(lat, lon, angle, t, a, kdef, period)
+         real (kind=RKIND), intent(in) :: lat, lon, angle, t, a, kdef, period
+         real (kind=RKIND) :: lamp, u, v
+         lamp = lon - 2.0_RKIND * pii * t / period
+         u = kdef * sin(lamp)**2 * sin(2.0_RKIND*lat) * cos(pii * t / period) + 2.0_RKIND * pii * a / period * cos(lat)
+         v = kdef * sin(2.0_RKIND*lamp) * cos(lat) * cos(pii * t / period)
+         kinematic_normal_wind = u * cos(angle) + v * sin(angle)
+      end function kinematic_normal_wind
+
+   end subroutine atm_kinematic_set_fluxes
 
 
    !-----------------------------------------------------------------------
