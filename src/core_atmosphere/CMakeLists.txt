@@ -317,6 +317,7 @@ set(ATMOSPHERE_CORE_DYNAMICS_SOURCES
     mpas_atm_boundaries.F
     mpas_atm_dissipation_models.F
     mpas_atm_iau.F
+    mpas_atm_kinematic.F
     mpas_atm_time_integration.F)
 list(TRANSFORM ATMOSPHERE_CORE_DYNAMICS_SOURCES PREPEND dynamics/)
 
