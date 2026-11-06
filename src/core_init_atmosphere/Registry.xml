@@ -75,7 +75,7 @@
                 <nml_option name="config_kinematic_case"        type="character"     default_value="lauritzen_nondiv" in_defaults="false"
                      units="-"
                      description="Kinematic transport test whose tracer initial conditions are written (case 14 only); must match config_kinematic_case in the model namelist"
-                     possible_values="`lauritzen_nondiv'"/>
+                     possible_values="`lauritzen_nondiv', `lauritzen_div'"/>
 
                 <nml_option name="config_calendar_type" type="character" default_value="gregorian" in_defaults="false"
                      units="-"

@@ -267,7 +267,7 @@ contains
       ! Tracers
       !
       select case (trim(config_kinematic_case))
-      case ('lauritzen_nondiv')
+      case ('lauritzen_nondiv', 'lauritzen_div')
          call init_atm_passive_tracers(mesh, state, configs, nCells)
       case default
          call mpas_log_write('Init case 14: unknown config_kinematic_case '''//trim(config_kinematic_case)//'''', &

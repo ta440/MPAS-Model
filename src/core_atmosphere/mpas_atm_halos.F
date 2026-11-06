@@ -49,6 +49,7 @@ module mpas_atm_halos
       ! Local variables
       character(len=StrKIND), pointer :: config_halo_exch_method
       integer, pointer :: config_num_passive_tracers
+      character(len=StrKIND), pointer :: config_kinematic_case
 
 
       !
@@ -56,6 +57,7 @@ module mpas_atm_halos
       !
       call mpas_pool_get_config(domain % blocklist % configs, 'config_halo_exch_method', config_halo_exch_method)
       call mpas_pool_get_config(domain % blocklist % configs, 'config_num_passive_tracers', config_num_passive_tracers)
+      call mpas_pool_get_config(domain % blocklist % configs, 'config_kinematic_case', config_kinematic_case)
 
       if (trim(config_halo_exch_method) == 'mpas_dmpar') then
          call mpas_log_write('')
@@ -163,6 +165,12 @@ module mpas_atm_halos
             call mpas_dmpar_exch_group_create(domain, 'dynamics:passive_tracers_old')
             call mpas_dmpar_exch_group_add_field(domain, 'dynamics:passive_tracers_old', 'passive_tracers', &
                                                  timeLevel=1, haloLayers=(/1,2/))
+         end if
+
+         ! Kinematic transport tests: the density is advanced without the dynamics
+         if (trim(config_kinematic_case) /= 'off') then
+            call mpas_dmpar_exch_group_create(domain, 'dynamics:rho_zz')
+            call mpas_dmpar_exch_group_add_field(domain, 'dynamics:rho_zz', 'rho_zz', timeLevel=2, haloLayers=(/1,2/))
          end if
 
 #ifdef DO_PHYSICS
@@ -308,6 +316,13 @@ module mpas_atm_halos
             call mpas_halo_exch_group_complete(domain, 'dynamics:passive_tracers_old')
          end if
 
+         ! Kinematic transport tests: the density is advanced without the dynamics
+         if (trim(config_kinematic_case) /= 'off') then
+            call mpas_halo_exch_group_create(domain, 'dynamics:rho_zz')
+            call mpas_halo_exch_group_add_field(domain, 'dynamics:rho_zz', 'rho_zz', timeLevel=2, haloLayers=(/1,2/))
+            call mpas_halo_exch_group_complete(domain, 'dynamics:rho_zz')
+         end if
+
 #ifdef DO_PHYSICS
          !
          ! Set up halo exchange groups used by physics
@@ -372,10 +387,12 @@ module mpas_atm_halos
       ! Local variables
       character(len=StrKIND), pointer :: config_halo_exch_method
       integer, pointer :: config_num_passive_tracers
+      character(len=StrKIND), pointer :: config_kinematic_case
 
 
       call mpas_pool_get_config(domain % blocklist % configs, 'config_halo_exch_method', config_halo_exch_method)
       call mpas_pool_get_config(domain % blocklist % configs, 'config_num_passive_tracers', config_num_passive_tracers)
+      call mpas_pool_get_config(domain % blocklist % configs, 'config_kinematic_case', config_kinematic_case)
 
       if (trim(config_halo_exch_method) == 'mpas_dmpar') then
          !
@@ -407,6 +424,10 @@ module mpas_atm_halos
          if (config_num_passive_tracers > 0) then
             call mpas_dmpar_exch_group_destroy(domain, 'dynamics:passive_tracers')
             call mpas_dmpar_exch_group_destroy(domain, 'dynamics:passive_tracers_old')
+         end if
+
+         if (trim(config_kinematic_case) /= 'off') then
+            call mpas_dmpar_exch_group_destroy(domain, 'dynamics:rho_zz')
          end if
 
 #ifdef DO_PHYSICS
@@ -448,6 +469,10 @@ module mpas_atm_halos
          if (config_num_passive_tracers > 0) then
             call mpas_halo_exch_group_destroy(domain, 'dynamics:passive_tracers')
             call mpas_halo_exch_group_destroy(domain, 'dynamics:passive_tracers_old')
+         end if
+
+         if (trim(config_kinematic_case) /= 'off') then
+            call mpas_halo_exch_group_destroy(domain, 'dynamics:rho_zz')
          end if
 
 #ifdef DO_PHYSICS

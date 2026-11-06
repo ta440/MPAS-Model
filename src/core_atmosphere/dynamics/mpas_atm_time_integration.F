@@ -2737,7 +2737,8 @@ module atm_time_integration
          end if
 
          if (kinematic_transport) then
-            call atm_kinematic_set_fluxes(block, real(itimestep-1,RKIND)*dt, dt, itimestep == 1)
+            call atm_kinematic_set_fluxes(domain, block, real(itimestep-1,RKIND)*dt, dt, itimestep == 1, &
+                                          exchange_halo_group, config_gpu_aware_mpi)
          end if
 
          RK3_SPLIT_TRANSPORT : do rk_step = 1, 3  ! Runge-Kutta loop
