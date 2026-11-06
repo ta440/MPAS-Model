@@ -68,8 +68,14 @@
                                         8 = surface field (SST, sea-ice) update file for use with real-data simulations \newline
                                         9 = lateral boundary conditions update file for use with real-data simulations \newline
                                         10 = idealized LES case \newline
-                                        13 = CAM-MPAS 3-d grid with specified topography and zeta levels"
-                     possible_values="1 -- 10, or 13"/>
+                                        13 = CAM-MPAS 3-d grid with specified topography and zeta levels \newline
+                                        14 = kinematic transport tests (flat terrain, isothermal; for use with config_kinematic_case in the model)"
+                     possible_values="1 -- 10, 13 or 14"/>
+
+                <nml_option name="config_kinematic_case"        type="character"     default_value="lauritzen_nondiv" in_defaults="false"
+                     units="-"
+                     description="Kinematic transport test whose tracer initial conditions are written (case 14 only); must match config_kinematic_case in the model namelist"
+                     possible_values="`lauritzen_nondiv'"/>
 
                 <nml_option name="config_calendar_type" type="character" default_value="gregorian" in_defaults="false"
                      units="-"
@@ -117,7 +123,7 @@
 
                 <nml_option name="config_num_passive_tracers"   type="integer"       default_value="0" in_defaults="false"
                      units="-"
-                     description="The number of passive tracers to initialize (case 2 only); must equal the value used by the model"
+                     description="The number of passive tracers to initialize (cases 2 and 14); must equal the value used by the model"
                      possible_values="Non-negative integer values"/>
 
                 <nml_option name="config_nsoillevels"           type="integer"       default_value="4"

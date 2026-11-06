@@ -27,6 +27,7 @@ set(init_atm_core_srcs
         mpas_gsl_oro_data_lg_scale.F
         mpas_init_atm_bitarray.F
         mpas_init_atm_cases.F
+        mpas_init_atm_kinematic_tests.F
         mpas_init_atm_core.F
         mpas_init_atm_core_interface.F
         mpas_init_atm_thompson_aerosols.F
