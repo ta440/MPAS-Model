@@ -282,11 +282,13 @@ contains
    !
    !> \brief Initialize passive tracers with the standard transport-test shapes
    !> \details
-   !>  Tracer n is set to shape mod(n-1,4), so that tracers n and n+4 are identical:
+   !>  Tracer n is set to shape mod(n-1,5), so that tracers n and n+5 are identical:
    !>    0: uniform value 1 (consistency with the mass field)
    !>    1: Gaussian hills      (Lauritzen et al. 2012, GMD, eqs. 7-9)
    !>    2: cosine bells        (eqs. 10-11)
    !>    3: slotted cylinders   (eq. 12)
+   !>    4: correlated cosine bells, -0.8 * (cosine bells)**2 + 0.9 (eqs. 13-15);
+   !>       with shape 2 it forms the tracer pair of the mixing diagnostics
    !>  The fields are uniform in the vertical. Each shape is a pair of
    !>  distributions centred at (5pi/6, 0) and (7pi/6, 0).
    !-----------------------------------------------------------------------
@@ -305,7 +307,7 @@ contains
 
       real (kind=RKIND), parameter :: radius = 0.5_RKIND   ! r/R for bells and cylinders
       real (kind=RKIND), dimension(2) :: lon_c, lat_c, x_c, y_c, z_c
-      real (kind=RKIND), dimension(0:3) :: tracer_shape
+      real (kind=RKIND), dimension(0:4) :: tracer_shape
       real (kind=RKIND) :: x, y, z, r_i, dlon
       integer :: iCell, itracer, i
 
@@ -361,8 +363,11 @@ contains
             end if
          end do
 
+         ! correlated cosine bells
+         tracer_shape(4) = -0.8_RKIND * tracer_shape(2)**2 + 0.9_RKIND
+
          do itracer = 1, config_num_passive_tracers
-            passive_tracers(itracer,:,iCell) = tracer_shape(mod(itracer-1, 4))
+            passive_tracers(itracer,:,iCell) = tracer_shape(mod(itracer-1, 5))
          end do
       end do
 

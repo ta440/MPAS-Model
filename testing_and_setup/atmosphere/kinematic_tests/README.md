@@ -11,8 +11,8 @@ Location in the fork: `testing_and_setup/atmosphere/kinematic_tests/`.
 
 | `config_kinematic_case` | Flow | Exact solution | Status |
 |---|---|---|---|
-| `lauritzen_nondiv` | Lauritzen et al. (2012, GMD) Case 4: non-divergent deformation with a background solid-body rotation, T = 12 days | the initial state at t = T | available |
-| `lauritzen_div` | Lauritzen et al. (2012) Case 3: divergent deformation | initial state at T | planned |
+| `lauritzen_nondiv` | Lauritzen et al. (2012, GMD 5, 887–901), eqs. 18–20: non-divergent deformation with a background solid-body rotation, T = 12 days | the initial state at t = T | available |
+| `lauritzen_div` | Lauritzen et al. (2012), eqs. 21–22: divergent deformation with the same background rotation | initial state at T | planned |
 | `dcmip_1_2` | DCMIP-2012 1-2: Hadley-like overturning | initial state at T | planned |
 | `dcmip_1_1` | DCMIP-2012 1-1: 3D deformation | initial state at T | planned |
 | `terminator` | Lauritzen et al. (2015) terminator toy chemistry | conservation of Cl + 2 Cl2 | planned |

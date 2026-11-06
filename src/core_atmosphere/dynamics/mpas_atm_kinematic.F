@@ -95,9 +95,9 @@ contains
    !-----------------------------------------------------------------------
    !  routine kinematic_lauritzen_nondiv
    !
-   !> \brief Fluxes for Case 4 of Lauritzen et al. (2012, GMD 5, 887-901)
+   !> \brief Fluxes for the non-divergent flow of Lauritzen et al. (2012, GMD 5, 887-901)
    !> \details
-   !>  Non-divergent deformational flow with a background flow, eqs. (18)-(20),
+   !>  Deformational flow with a background solid-body rotation, eqs. (18)-(20),
    !>  with T = 12 days and k = 10a/T. The solid-body rotation term
    !>  (2 pi a/T) cos(lat) carries the pattern once around the sphere in T, so
    !>  the tracer crosses different cells and edges after the flow reverses at
