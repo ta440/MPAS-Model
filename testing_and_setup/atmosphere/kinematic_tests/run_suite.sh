@@ -3,19 +3,20 @@
 # Run a suite of kinematic transport tests. See README.md.
 #
 # Usage: run_suite.sh <quick|convergence|scaling|ranks> -d <meshes_dir> [-b <exe_dir>] [-n <ranks>] [-k <rk_order>]
-#                    [-L <on|off>]
+#                    [-L <on|off>] [-B <fct_block_size>]
 #   <meshes_dir> holds one subdirectory per mesh (x1.10242/, x1.40962/, x1.163842/).
 #
 HERE=$(cd "$(dirname "$0")" && pwd)
 SUITE=$1; shift || true
-MESHES=; EXTRA=()
-while getopts "d:b:n:k:L:" opt; do
+MESHES=; EXTRA=(); B=
+while getopts "d:b:n:k:L:B:" opt; do
    case $opt in
       d) MESHES=$OPTARG ;;
       b) EXTRA+=(-b "$OPTARG") ;;
       n) EXTRA+=(-n "$OPTARG") ;;
       k) EXTRA+=(-k "$OPTARG") ;;
       L) EXTRA+=(-L "$OPTARG") ;;
+      B) EXTRA+=(-B "$OPTARG"); B=$OPTARG ;;
       *) sed -n '2,7p' "$0"; exit 2 ;;
    esac
 done
@@ -43,17 +44,17 @@ case $SUITE in
       # Whole blocks of the five tracer shapes; N = 10 stands in for a default MPAS run
       # (about 11 tracers), N = 200 is the upper bound for chemistry
       for n in 5 10 20 50 100 200; do
-         run lauritzen_nondiv x1.40962 -N $n -r 1_00:00:00 -i 1_00:00:00 -o "$PWD/runs/scaling_x1.40962_N${n}"
+         run lauritzen_nondiv x1.40962 -N $n -r 1_00:00:00 -i 1_00:00:00 -o "$PWD/runs/scaling_x1.40962_N${n}${B:+_B$B}"
       done ;;
    ranks)
       # Results must not depend on the decomposition: 1 and 4 ranks, all fields bitwise equal
       for case in lauritzen_nondiv lauritzen_div dcmip2012_1_2; do
          opts=(); [ $case = dcmip2012_1_2 ] && opts=(-i 0_12:00:00)
          for n in 1 4; do
-            run $case x1.10242 -n $n "${opts[@]}" -o "$PWD/runs/ranks_${case}_np$n"
+            run $case x1.10242 -n $n "${opts[@]}" -o "$PWD/runs/ranks_${case}${B:+_B$B}_np$n"
          done
-         ${PYTHON:-python3} "$HERE/check_kinematic_test.py" --compare "$PWD/runs/ranks_${case}_np1" \
-            "$PWD/runs/ranks_${case}_np4" || FAILED+=("ranks $case: 1 and 4 ranks differ")
+         ${PYTHON:-python3} "$HERE/check_kinematic_test.py" --compare "$PWD/runs/ranks_${case}${B:+_B$B}_np1" \
+            "$PWD/runs/ranks_${case}${B:+_B$B}_np4" || FAILED+=("ranks $case: 1 and 4 ranks differ")
       done ;;
    *)
       echo "Unknown suite '$SUITE' (quick, convergence, scaling or ranks)"; exit 2 ;;

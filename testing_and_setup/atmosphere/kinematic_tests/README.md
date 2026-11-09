@@ -98,7 +98,8 @@ identical.
 | `-N` | passive tracers | Lauritzen: 5; `dcmip2012_1_2`: 3 |
 | `-r` | run duration | Lauritzen: `12_00:00:00`; `dcmip2012_1_2`: `1_00:00:00` |
 | `-i` | history output interval | Lauritzen: `3_00:00:00`; `dcmip2012_1_2`: `0_01:00:00` (DCMIP Table VII) |
-| `-o` | run directory | `./runs/<case>_<mesh>_N<ntracers>_rk<order>_lim<on/off>` |
+| `-B` | tracers per block in the FCT stage, `config_fct_block_size`; 0 uses the original routine | not set (original routine) |
+| `-o` | run directory | `./runs/<case>_<mesh>_N<ntracers>_rk<order>_lim<on/off>[_B<n>]` |
 
 The script writes the namelists and streams from the case templates, runs
 `init_atmosphere_model` (init case 14) and then `atmosphere_model`, and runs the

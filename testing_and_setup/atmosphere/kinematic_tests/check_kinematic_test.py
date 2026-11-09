@@ -221,6 +221,7 @@ def main(run_dir):
     rk_order = int(nml.get("config_time_integration_order", "2"))   # MPAS default is 2
     ntracers = int(nml["config_num_passive_tracers"])
     run_days = duration_days(nml["config_run_duration"])
+    fct_block = int(nml.get("config_fct_block_size", "0"))         # 0: original FCT routine
 
     files = sorted(glob.glob(os.path.join(run_dir, "history.*.nc")))
     if len(files) < 2:
@@ -378,7 +379,7 @@ def main(run_dir):
 
     # Report
     print(f"\n{case} on {mesh}: dt = {dt:g} s, RK order {rk_order}, {nlev} levels, {ntracers} tracers, "
-          f"{run_days:g} days, limiter {'on' if monotonic else 'off'}")
+          f"{run_days:g} days, limiter {'on' if monotonic else 'off'}, FCT block {fct_block}")
     if errors:
         print(f"\n  {'shape at T':<26}{'l1':>11}{'l2':>11}{'linf':>11}")
         for s, e in errors.items():
@@ -410,7 +411,7 @@ def main(run_dir):
     print(f"\n  {'ALL CHECKS PASSED' if ok else 'SOME CHECKS FAILED'}\n")
 
     results = {"case": case, "mesh": mesh, "dt": dt, "rk_order": rk_order, "nlev": nlev, "ntracers": ntracers,
-               "run_days": run_days, "monotonic": monotonic, "nranks": nranks,
+               "run_days": run_days, "monotonic": monotonic, "nranks": nranks, "fct_block_size": fct_block,
                "errors_at_T": errors, "errors_at_T_half_exact": errors_half, "density_error_at_T": rho_error,
                "mixing_at_T_half": mixing, "mixing_by_level_T_half": mixing_profile,
                "mixing_at_T": mixing_T, "mixing_by_level_T": mixing_T_profile,
