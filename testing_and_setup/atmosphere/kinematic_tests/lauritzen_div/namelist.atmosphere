@@ -1,0 +1,34 @@
+&nhyd_model
+    config_dt = @DT@
+    config_time_integration_order = @RKORDER@
+    config_start_time = '0000-01-01_00:00:00'
+    config_run_duration = '@DURATION@'
+    config_split_dynamics_transport = true
+    config_scalar_advection = true
+    config_monotonic = @MONOTONIC@
+    config_coef_3rd_order = 0.25
+    config_num_passive_tracers = @NTRACERS@
+    config_kinematic_case = '@CASE@'
+/
+&damping
+/
+&limited_area
+    config_apply_lbcs = false
+/
+&io
+/
+&decomposition
+    config_block_decomp_file_prefix = '@MESH@.graph.info.part.'
+/
+&restart
+    config_do_restart = false
+/
+&printout
+    config_print_global_minmax_vel = false
+/
+&IAU
+    config_IAU_option = 'off'
+/
+&physics
+    config_physics_suite = 'none'
+/

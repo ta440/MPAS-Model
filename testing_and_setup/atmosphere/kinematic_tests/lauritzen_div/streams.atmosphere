@@ -1,0 +1,20 @@
+<streams>
+<immutable_stream name="input"
+                  type="input"
+                  filename_template="@MESH@.init.nc"
+                  input_interval="initial_only" />
+
+<immutable_stream name="restart"
+                  type="input;output"
+                  filename_template="restart.$Y-$M-$D_$h.$m.$s.nc"
+                  input_interval="initial_only"
+                  output_interval="none" />
+
+<stream name="output"
+        type="output"
+        filename_template="history.$Y-$M-$D_$h.$m.$s.nc"
+        output_interval="@OUTPUT_INTERVAL@" >
+
+	<file name="stream_list.atmosphere.output"/>
+</stream>
+</streams>

@@ -12,15 +12,30 @@ Location in the fork: `testing_and_setup/atmosphere/kinematic_tests/`.
 | `config_kinematic_case` | Flow | Exact solution | Status |
 |---|---|---|---|
 | `lauritzen_nondiv` | Lauritzen et al. (2012, GMD 5, 887–901), eqs. 18–20: non-divergent deformation with a background solid-body rotation, T = 12 days | the initial state at t = T | available |
-| `lauritzen_div` | Lauritzen et al. (2012), eqs. 21–22: divergent deformation with the same background rotation | initial state at T | planned |
+| `lauritzen_div` | Lauritzen et al. (2012), eqs. 21–22: divergent deformation with the same background rotation, T = 12 days | the initial state at T, and density 1 at T | available |
 | `dcmip_1_2` | DCMIP-2012 1-2: Hadley-like overturning | initial state at T | planned |
 | `dcmip_1_1` | DCMIP-2012 1-1: 3D deformation | initial state at T | planned |
 | `terminator` | Lauritzen et al. (2015) terminator toy chemistry | conservation of Cl + 2 Cl2 | planned |
 
 Each case has a directory with namelist and streams templates. The tracers are the
-passive-tracer array (`config_num_passive_tracers`); tracer `n` has shape `mod(n-1,4)`:
-0 uniform (q = 1), 1 Gaussian hills, 2 cosine bells, 3 slotted cylinders. Tracers `n`
-and `n+4` are identical copies, which must stay bitwise identical.
+passive-tracer array (`config_num_passive_tracers`); tracer `n` has shape `mod(n-1,5)`:
+0 uniform (q = 1), 1 Gaussian hills, 2 cosine bells, 3 slotted cylinders, 4 correlated
+cosine bells (ξ = −0.8 χ² + 0.9, with χ the cosine bells; Lauritzen et al. 2012, eqs.
+13–15). Shapes 2 and 4 form the tracer pair for the mixing diagnostics. Tracers `n` and
+`n+5` are identical copies, which must stay bitwise identical.
+
+### How the fluxes are prescribed
+
+- `lauritzen_nondiv`: the streamfunction is averaged over the step (3-point
+  Gauss–Legendre in time) at the cell vertices, and the edge flux is its difference along
+  the edge. This is the exact edge- and step-mean flux, and its discrete divergence is
+  zero, so ρ_zz stays 1.
+- `lauritzen_div`: the normal velocity is averaged over each edge and over the step with
+  3 × 3 Gauss–Legendre points. The density starts at 1 and is advanced on the mesh with
+  the stages of the MPAS RK3, as the dynamics would; `ruAvg` is the final-stage mass flux,
+  and ρ_zz at the new time level is updated from it with the transport's own arithmetic,
+  so a uniform tracer stays uniform. The halo of ρ_zz is exchanged after each stage.
+  The exact density at T is 1, so its error at T is reported as well.
 
 ## Requirements
 
@@ -47,7 +62,8 @@ and `n+4` are identical copies, which must stay bitwise identical.
   Unpack each into its own directory, for example `meshes/x1.10242/`. If a partition
   file for your rank count is missing, the run script makes one with `gpmetis` when it
   is on the path.
-- Python 3 with `numpy` and `netCDF4` for the checker.
+- Python 3 with `numpy` and `netCDF4` for the checker. The scripts call `python3`; to use
+  another interpreter (for example a virtual environment), set `PYTHON=/path/to/python`.
 
 ## Running one test
 
@@ -66,7 +82,7 @@ and `n+4` are identical copies, which must stay bitwise identical.
 | `-k` | Runge–Kutta order, `config_time_integration_order` (2 or 3) | 2 |
 | `-L` | FCT limiter, `config_monotonic` (`on` or `off`) | `on` |
 | `-l` | vertical levels | 5 |
-| `-N` | passive tracers | 4 |
+| `-N` | passive tracers | 5 |
 | `-r` | run duration | `12_00:00:00` |
 | `-i` | history output interval | `3_00:00:00` |
 | `-o` | run directory | `./runs/<case>_<mesh>_N<ntracers>_rk<order>_lim<on/off>` |
@@ -78,15 +94,16 @@ checker. The exit code is the checker's: 0 if all checks pass.
 ## Suites
 
 ```
-./run_suite.sh quick        -d /path/to/meshes      # 240 km, 4 tracers, 12 days; about 30 s on 4 cores
-./run_suite.sh convergence  -d /path/to/meshes      # 240, 120, 60 km
-./run_suite.sh scaling      -d /path/to/meshes      # 120 km, N = 4, 11, 50, 100, 200, 1 day
+./run_suite.sh quick        -d /path/to/meshes      # both cases, 240 km, 5 tracers; about 1 min on 4 cores
+./run_suite.sh convergence  -d /path/to/meshes      # both cases, 240, 120, 60 km
+./run_suite.sh scaling      -d /path/to/meshes      # 120 km, N = 5, 10, 20, 50, 100, 200, 1 day
+./run_suite.sh ranks        -d /path/to/meshes      # both cases, 240 km, 1 and 4 ranks: bitwise identical
 ```
 
 `-d` here is the parent directory holding one subdirectory per mesh; `-b`, `-n`, `-k`
-and `-L` are passed on to every run. The scaling suite
-covers the range that matters operationally: about 11 tracers in a default MPAS run, and
-up to 200 for chemistry.
+and `-L` are passed on to every run. The scaling suite uses whole blocks of the five
+shapes and covers the range that matters operationally: about 11 tracers in a default
+MPAS run (N = 10 here), and up to 200 for chemistry.
 
 ## Time integration
 
@@ -113,14 +130,24 @@ default.
 | Uniform tracer | max \|q − 1\| < 1e-13 at every output time |
 | Mass conservation | relative change in Σ A ρ_zz q Δζ < 1e-12 for every tracer |
 | Shape preservation (if `config_monotonic`) | no value outside the initial global range by more than 1e-13 |
-| Identical copies | tracer n bitwise equal to tracer n−4 at every output time |
+| Identical copies | tracer n bitwise equal to tracer n−5 at every output time |
 | Identical levels (2D cases) | every level bitwise equal to level 1 |
-| Density (cases with ρ_zz = 1) | ρ_zz exactly 1 after t = 0 (the t = 0 file holds the init density) |
+| Density (`lauritzen_nondiv`) | ρ_zz exactly 1 after t = 0 (the t = 0 file holds the init density) |
 | Regression (if a reference exists, and the run reaches T) | l2 error of each shape within 1% of `references.json` |
 
-It also prints the normalised l1, l2 and l∞ errors at T (Lauritzen et al. 2012,
-eqs. 26–28) and the transport cost from the MPAS timers, and writes everything to
-`results.json` in the run directory.
+It also prints, without pass/fail:
+
+- the normalised l1, l2 and l∞ errors at T (Lauritzen et al. 2012, eqs. 26–28);
+- for `lauritzen_div`, the maximum and rms error of the density at T (exact value 1);
+- for `lauritzen_nondiv`, the mixing diagnostics ℓr ("real" mixing), ℓu
+  (range-preserving unmixing) and ℓo (overshooting) at T/2 for the correlated pair
+  (Lauritzen et al. 2012, Sect. 3.5 and Appendix C);
+- the transport cost from the MPAS timers;
+
+and writes everything to `results.json` in the run directory.
+
+`check_kinematic_test.py --compare <run_a> <run_b>` checks that two runs have bitwise
+identical history files; the `ranks` suite uses it.
 
 The regression references are keyed by case, mesh, time step, RK order and limiter
 setting; runs with no matching reference skip that check. They come from our runs with
