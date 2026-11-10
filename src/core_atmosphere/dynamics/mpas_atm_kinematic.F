@@ -10,7 +10,7 @@ module atm_kinematic
    use mpas_derived_types, only : domain_type, block_type, mpas_pool_type, MPAS_LOG_ERR, MPAS_LOG_CRIT
    use mpas_pool_routines, only : mpas_pool_get_subpool, mpas_pool_get_dimension, &
                                   mpas_pool_get_config, mpas_pool_get_array
-   use mpas_constants, only : pii
+   use mpas_constants, only : pii, rgas
    use mpas_log, only : mpas_log_write
 
    implicit none
@@ -46,7 +46,7 @@ contains
       if (trim(config_kinematic_case) == 'off') return
 
       select case (trim(config_kinematic_case))
-      case ('lauritzen_nondiv', 'lauritzen_div')
+      case ('lauritzen_nondiv', 'lauritzen_div', 'dcmip2012_1_2')
       case default
          call mpas_log_write('Unknown config_kinematic_case '''//trim(config_kinematic_case)//'''', &
                              messageType=MPAS_LOG_ERR)
@@ -94,6 +94,8 @@ contains
          call kinematic_lauritzen_nondiv(block, t0, dt, check)
       case ('lauritzen_div')
          call kinematic_lauritzen_div(domain, block, t0, dt, check, exchange_halo_group, config_gpu_aware_mpi)
+      case ('dcmip2012_1_2')
+         call kinematic_dcmip2012_1_2(block, t0, dt, check)
       case default
          call mpas_log_write('atm_kinematic_set_fluxes: unknown case '''//trim(config_kinematic_case)//'''', &
                              messageType=MPAS_LOG_CRIT)
@@ -482,5 +484,237 @@ contains
       end function point_normal_wind
 
    end subroutine kinematic_lauritzen_div
+
+
+   !-----------------------------------------------------------------------
+   !  routine kinematic_dcmip2012_1_2
+   !
+   !> \brief Fluxes for DCMIP-2012 test 1-2, the Hadley-like meridional circulation
+   !> \details
+   !>  Eqs. (36)-(38) of the DCMIP-2012 test case document (v1.7); Kent et al.
+   !>  (2014, QJRMS 140, 1279-1293), Sect. 4. Solid-body zonal flow plus K = 5
+   !>  overturning cells in latitude-height that reverse at tau/2, tau = 1 day.
+   !>  The mass flux is non-divergent in 3D and rho_zz is held fixed at its
+   !>  initial (isothermal, hydrostatic) profile.
+   !>
+   !>  Zonal part: rho_zz times the vertex-streamfunction flux of u0 cos(lat),
+   !>  divergence-free to roundoff. Meridional part: separable as
+   !>  A(t) g(lat) cos(pi z/ztop); the step mean of cos(pi t/tau) and the layer
+   !>  mean of cos(pi z/ztop) are exact, and the edge mean of g(lat) j.n uses
+   !>  3-point Gauss-Legendre along the arc. wwAvg is then derived from the
+   !>  discrete horizontal divergence of g j, so that the 3D mass divergence of
+   !>  every cell is zero to roundoff and a uniform tracer stays uniform. With
+   !>  check = .true. the fluxes are compared with the point-sampled analytic
+   !>  winds, and the mass divergence of the owned cells is checked.
+   !-----------------------------------------------------------------------
+   subroutine kinematic_dcmip2012_1_2(block, t0, dt, check)
+
+      implicit none
+
+      type (block_type), intent(inout) :: block
+      real (kind=RKIND), intent(in) :: t0, dt
+      logical, intent(in) :: check
+
+      type (mpas_pool_type), pointer :: mesh, state, diag
+      integer, pointer :: nVertLevels, nEdges, nCells, nCellsSolve, nVertices
+      integer, dimension(:), pointer :: nEdgesOnCell
+      integer, dimension(:,:), pointer :: verticesOnEdge, edgesOnCell
+      real (kind=RKIND), dimension(:), pointer :: xVertex, yVertex, zVertex, latVertex, latEdge, angleEdge, latCell
+      real (kind=RKIND), dimension(:), pointer :: dvEdge, invAreaCell, rdzw
+      real (kind=RKIND), dimension(:,:), pointer :: edgesOnCell_sign, zgrid
+      real (kind=RKIND), dimension(:,:), pointer :: ruAvg, wwAvg, rho_zz_1, rho_zz_2, u_2
+      real (kind=RKIND), pointer :: sphere_radius
+
+      real (kind=RKIND), parameter :: tau = 86400.0_RKIND, u0 = 40.0_RKIND, w0 = 0.15_RKIND
+      real (kind=RKIND), parameter :: ztop = 12000.0_RKIND, p0 = 1.0e+05_RKIND, t_iso = 300.0_RKIND
+      real (kind=RKIND), parameter :: kc = 5.0_RKIND                   ! K, the number of overturning cells
+      ! 3-point Gauss-Legendre rule on [-1,1]: nodes 0, +-sqrt(3/5); weights 8/9, 5/9 (halved here, so they sum to 1)
+      real (kind=RKIND), dimension(3), parameter :: gl_x = (/ -0.7745966692414834_RKIND, 0.0_RKIND, &
+                                                               0.7745966692414834_RKIND /)
+      real (kind=RKIND), dimension(3), parameter :: gl_w = (/ 5.0_RKIND, 8.0_RKIND, 5.0_RKIND /) / 18.0_RKIND
+
+      real (kind=RKIND), dimension(:), allocatable :: psi, m_edge, vmer, s_int, rho_col
+      real (kind=RKIND), dimension(3) :: p1, p2, pq, nrm
+      real (kind=RKIND) :: a, rho0, amp, uz, mer, uz_mid, mer_mid, s, arc, lat, lon, cdiv, cdiv_exact
+      real (kind=RKIND) :: err_u, max_u, err_w, max_w, res, res_scale, hdiv
+      integer :: iCell, iEdge, iVtx, j, k, is, v1, v2, n_fallback
+
+      call mpas_pool_get_subpool(block % structs, 'mesh', mesh)
+      call mpas_pool_get_subpool(block % structs, 'state', state)
+      call mpas_pool_get_subpool(block % structs, 'diag', diag)
+
+      call mpas_pool_get_dimension(mesh, 'nVertLevels', nVertLevels)
+      call mpas_pool_get_dimension(mesh, 'nEdges', nEdges)
+      call mpas_pool_get_dimension(mesh, 'nCells', nCells)
+      call mpas_pool_get_dimension(mesh, 'nCellsSolve', nCellsSolve)
+      call mpas_pool_get_dimension(mesh, 'nVertices', nVertices)
+      call mpas_pool_get_config(mesh, 'sphere_radius', sphere_radius)
+
+      call mpas_pool_get_array(mesh, 'verticesOnEdge', verticesOnEdge)
+      call mpas_pool_get_array(mesh, 'edgesOnCell', edgesOnCell)
+      call mpas_pool_get_array(mesh, 'nEdgesOnCell', nEdgesOnCell)
+      call mpas_pool_get_array(mesh, 'edgesOnCell_sign', edgesOnCell_sign)
+      call mpas_pool_get_array(mesh, 'xVertex', xVertex)
+      call mpas_pool_get_array(mesh, 'yVertex', yVertex)
+      call mpas_pool_get_array(mesh, 'zVertex', zVertex)
+      call mpas_pool_get_array(mesh, 'latVertex', latVertex)
+      call mpas_pool_get_array(mesh, 'latEdge', latEdge)
+      call mpas_pool_get_array(mesh, 'angleEdge', angleEdge)
+      call mpas_pool_get_array(mesh, 'latCell', latCell)
+      call mpas_pool_get_array(mesh, 'dvEdge', dvEdge)
+      call mpas_pool_get_array(mesh, 'invAreaCell', invAreaCell)
+      call mpas_pool_get_array(mesh, 'rdzw', rdzw)
+      call mpas_pool_get_array(mesh, 'zgrid', zgrid)
+      call mpas_pool_get_array(diag, 'ruAvg', ruAvg)
+      call mpas_pool_get_array(diag, 'wwAvg', wwAvg)
+      call mpas_pool_get_array(state, 'rho_zz', rho_zz_1, 1)
+      call mpas_pool_get_array(state, 'rho_zz', rho_zz_2, 2)
+      call mpas_pool_get_array(state, 'u', u_2, 2)
+
+      a = sphere_radius
+      rho0 = p0 / (rgas * t_iso)
+
+      if (check) then
+         if (abs(zgrid(nVertLevels+1,1) - ztop) > 1.0e-6_RKIND * ztop) then
+            call mpas_log_write('dcmip2012_1_2 needs a model top of 12000 m (config_ztop in the init).', &
+                                messageType=MPAS_LOG_CRIT)
+         end if
+         do k = 1, nVertLevels
+            if (maxval(rho_zz_1(k,1:nCells)) /= minval(rho_zz_1(k,1:nCells))) then
+               call mpas_log_write('dcmip2012_1_2 needs rho_zz uniform in the horizontal (init case 14).', &
+                                   messageType=MPAS_LOG_CRIT)
+            end if
+         end do
+      end if
+
+      allocate(rho_col(nVertLevels), vmer(nVertLevels), s_int(nVertLevels+1))
+      rho_col(:) = rho_zz_1(1:nVertLevels,1)
+
+      ! Step mean of cos(pi t/tau), times the amplitude of rho v
+      amp = -a * w0 * pii * rho0 / (kc * ztop) &
+            * tau / (pii * dt) * (sin(pii * (t0 + dt) / tau) - sin(pii * t0 / tau))
+
+      ! Layer means of cos(pi z/ztop); (ztop/pi) sin(pi z/ztop) at the interfaces (flat terrain: column 1)
+      do k = 1, nVertLevels
+         vmer(k) = ztop / (pii * (zgrid(k+1,1) - zgrid(k,1))) &
+                   * (sin(pii * zgrid(k+1,1) / ztop) - sin(pii * zgrid(k,1) / ztop))
+      end do
+      do k = 1, nVertLevels+1
+         s_int(k) = ztop / pii * sin(pii * zgrid(k,1) / ztop)
+      end do
+
+      ! Streamfunction of the zonal solid-body flow at the vertices: u = -(1/a) dpsi/dlat
+      allocate(psi(nVertices+1))
+      psi(:) = 0.0_RKIND
+      do iVtx = 1, nVertices
+         psi(iVtx) = -u0 * a * sin(latVertex(iVtx))
+      end do
+
+      !
+      ! Horizontal mass fluxes
+      !
+      allocate(m_edge(nEdges+1))
+      m_edge(:) = 0.0_RKIND
+      n_fallback = 0
+      err_u = 0.0_RKIND
+      max_u = 0.0_RKIND
+      do iEdge = 1, nEdges
+         v1 = verticesOnEdge(1,iEdge)
+         v2 = verticesOnEdge(2,iEdge)
+         uz_mid = u0 * cos(latEdge(iEdge)) * cos(angleEdge(iEdge))
+         mer_mid = cos(latEdge(iEdge)) * sin(kc * latEdge(iEdge)) * sin(angleEdge(iEdge))
+         if (v1 >= 1 .and. v1 <= nVertices .and. v2 >= 1 .and. v2 <= nVertices) then
+            uz = -(psi(v2) - psi(v1)) / dvEdge(iEdge)
+            p1 = (/ xVertex(v1), yVertex(v1), zVertex(v1) /)
+            p2 = (/ xVertex(v2), yVertex(v2), zVertex(v2) /)
+            p1 = p1 / norm2(p1)
+            p2 = p2 / norm2(p2)
+            nrm = (/ p2(2)*p1(3) - p2(3)*p1(2), p2(3)*p1(1) - p2(1)*p1(3), p2(1)*p1(2) - p2(2)*p1(1) /)
+            nrm = nrm / norm2(nrm)                       ! n = (v2 x v1)/|v2 x v1|, constant along the arc
+            arc = acos(max(-1.0_RKIND, min(1.0_RKIND, dot_product(p1, p2))))
+            mer = 0.0_RKIND
+            do is = 1, 3
+               s = 0.5_RKIND * (1.0_RKIND + gl_x(is))
+               pq = (sin((1.0_RKIND - s) * arc) * p1 + sin(s * arc) * p2) / sin(arc)
+               lat = asin(max(-1.0_RKIND, min(1.0_RKIND, pq(3))))
+               lon = atan2(pq(2), pq(1))
+               mer = mer + gl_w(is) * cos(lat) * sin(kc * lat) &
+                         * (-sin(lat)*cos(lon) * nrm(1) - sin(lat)*sin(lon) * nrm(2) + cos(lat) * nrm(3))
+            end do
+            err_u = max(err_u, abs(uz - uz_mid), abs(amp * (mer - mer_mid)))
+            max_u = max(max_u, abs(uz_mid), abs(amp * mer_mid))
+         else
+            uz = uz_mid                              ! outer-halo edge; never updates an owned cell
+            mer = mer_mid
+            n_fallback = n_fallback + 1
+         end if
+         m_edge(iEdge) = mer
+         do k = 1, nVertLevels
+            ruAvg(k,iEdge) = rho_col(k) * uz + amp * vmer(k) * mer
+            u_2(k,iEdge) = ruAvg(k,iEdge) / rho_col(k)          ! diagnostic only: step-mean wind
+         end do
+      end do
+      ruAvg(:,nEdges+1) = 0.0_RKIND
+
+      !
+      ! Vertical mass flux from the discrete horizontal divergence of g(lat) j
+      !
+      wwAvg(:,:) = 0.0_RKIND
+      err_w = 0.0_RKIND
+      max_w = 0.0_RKIND
+      do iCell = 1, nCells
+         cdiv_exact = (-2.0_RKIND * sin(kc * latCell(iCell)) * sin(latCell(iCell)) &
+                       + kc * cos(latCell(iCell)) * cos(kc * latCell(iCell))) / a
+         if (all(edgesOnCell(1:nEdgesOnCell(iCell),iCell) <= nEdges)) then
+            cdiv = 0.0_RKIND
+            do j = 1, nEdgesOnCell(iCell)
+               iEdge = edgesOnCell(j,iCell)
+               cdiv = cdiv + edgesOnCell_sign(j,iCell) * m_edge(iEdge) * dvEdge(iEdge)
+            end do
+            cdiv = cdiv * invAreaCell(iCell)
+            ! peak of rho w over z is at sin(pi z/ztop) = 1: |amp| ztop/pi |C| (kg m-2 s-1)
+            err_w = max(err_w, abs(amp * ztop / pii * (cdiv - cdiv_exact)))
+            max_w = max(max_w, abs(amp * ztop / pii * cdiv_exact))
+         else
+            cdiv = cdiv_exact                         ! outer-halo cell; never updated as owned
+         end if
+         wwAvg(2:nVertLevels,iCell) = -amp * cdiv * s_int(2:nVertLevels)
+      end do
+
+      rho_zz_2(:,:) = rho_zz_1(:,:)
+
+      if (check) then
+         ! 3D mass divergence of the owned cells, relative to its horizontal part. Owned cells only:
+         ! a halo cell next to a fallback edge would fail this check without affecting the solution.
+         res = 0.0_RKIND
+         res_scale = 0.0_RKIND
+         do iCell = 1, nCellsSolve
+            do k = 1, nVertLevels
+               hdiv = 0.0_RKIND
+               do j = 1, nEdgesOnCell(iCell)
+                  iEdge = edgesOnCell(j,iCell)
+                  hdiv = hdiv + edgesOnCell_sign(j,iCell) * ruAvg(k,iEdge) * dvEdge(iEdge) * invAreaCell(iCell)
+               end do
+               res = max(res, abs(hdiv + rdzw(k) * (wwAvg(k+1,iCell) - wwAvg(k,iCell))))
+               res_scale = max(res_scale, abs(hdiv))
+            end do
+         end do
+         call mpas_log_write('Kinematic fluxes (dcmip2012_1_2): max |u.n| = $r m/s, max |flux - point wind| = $r m/s,' &
+                             //' max |rho w| = $r kg/m2/s, max |ww - cell-centre rho w| = $r, fallback edges = $i', &
+                             realArgs=(/max_u, err_u, max_w, err_w/), intArgs=(/n_fallback/))
+         call mpas_log_write('Kinematic fluxes (dcmip2012_1_2): max |3D mass divergence| = $r, relative $r', &
+                             realArgs=(/res, res / max(res_scale, tiny(1.0_RKIND))/))
+         if (err_u > 0.1_RKIND * max_u .or. err_w > 0.1_RKIND * max_w) then
+            call mpas_log_write('Kinematic fluxes disagree with the analytic wind; check the edge orientation.', &
+                                messageType=MPAS_LOG_CRIT)
+         end if
+         if (res > 1.0e-12_RKIND * res_scale) then
+            call mpas_log_write('dcmip2012_1_2 mass flux is not divergence-free.', messageType=MPAS_LOG_CRIT)
+         end if
+      end if
+
+      deallocate(psi, m_edge, vmer, s_int, rho_col)
+
+   end subroutine kinematic_dcmip2012_1_2
 
 end module atm_kinematic
