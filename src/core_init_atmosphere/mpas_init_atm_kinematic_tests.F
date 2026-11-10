@@ -269,12 +269,75 @@ contains
       select case (trim(config_kinematic_case))
       case ('lauritzen_nondiv', 'lauritzen_div')
          call init_atm_passive_tracers(mesh, state, configs, nCells)
+      case ('dcmip2012_1_2')
+         if (abs(config_ztop - 12000.0_RKIND) > 1.0e-6_RKIND) then
+            call mpas_log_write('Init case 14, dcmip2012_1_2: config_ztop must be 12000 m.', messageType=MPAS_LOG_CRIT)
+         end if
+         call init_atm_passive_tracers_dcmip2012_1_2(mesh, state, configs, nCells, nVertLevels)
       case default
          call mpas_log_write('Init case 14: unknown config_kinematic_case '''//trim(config_kinematic_case)//'''', &
                              messageType=MPAS_LOG_CRIT)
       end select
 
    end subroutine init_atm_case_kinematic
+
+
+   !-----------------------------------------------------------------------
+   !  routine init_atm_passive_tracers_dcmip2012_1_2
+   !
+   !> \brief Passive tracers for DCMIP-2012 test 1-2 (Hadley-like meridional circulation)
+   !> \details
+   !>  Tracer n is set to shape mod(n-1,3):
+   !>    0: uniform value 1 (consistency with the 3D mass flux)
+   !>    1: the q1 layer of DCMIP-2012 eq. (43), 1/2 [1 + cos(2 pi (z - z0)/(z2 - z1))]
+   !>       for z1 < z < z2, z1 = 2 km, z2 = 5 km, z0 = (z1 + z2)/2
+   !>    2: 0.9 - 0.8 q1**2, the correlated tracer of DCMIP-2012 eq. (167) (defined there
+   !>       for test 1-1); with shape 1 it forms the pair of the mixing diagnostics
+   !>  Values are sampled at the layer midpoints; they do not vary in the horizontal.
+   !-----------------------------------------------------------------------
+   subroutine init_atm_passive_tracers_dcmip2012_1_2(mesh, state, configs, nCells, nVertLevels)
+
+      implicit none
+
+      type (mpas_pool_type), intent(inout) :: mesh
+      type (mpas_pool_type), intent(inout) :: state
+      type (mpas_pool_type), intent(in) :: configs
+      integer, intent(in) :: nCells, nVertLevels
+
+      real (kind=RKIND), parameter :: z1 = 2000.0_RKIND, z2 = 5000.0_RKIND
+      real (kind=RKIND), parameter :: z0 = 0.5_RKIND * (z1 + z2)
+
+      integer, pointer :: config_num_passive_tracers
+      real (kind=RKIND), dimension(:,:,:), pointer :: passive_tracers
+      real (kind=RKIND), dimension(:,:), pointer :: zgrid
+
+      real (kind=RKIND), dimension(0:2) :: tracer_shape
+      real (kind=RKIND) :: zmid
+      integer :: iCell, k, itracer
+
+      call mpas_pool_get_config(configs, 'config_num_passive_tracers', config_num_passive_tracers)
+      if (config_num_passive_tracers <= 0) return
+
+      call mpas_pool_get_array(state, 'passive_tracers', passive_tracers)
+      call mpas_pool_get_array(mesh, 'zgrid', zgrid)
+
+      do iCell = 1, nCells
+         do k = 1, nVertLevels
+            zmid = 0.5_RKIND * (zgrid(k,iCell) + zgrid(k+1,iCell))
+            tracer_shape(0) = 1.0_RKIND
+            if (zmid > z1 .and. zmid < z2) then
+               tracer_shape(1) = 0.5_RKIND * (1.0_RKIND + cos(2.0_RKIND * pii * (zmid - z0) / (z2 - z1)))
+            else
+               tracer_shape(1) = 0.0_RKIND
+            end if
+            tracer_shape(2) = 0.9_RKIND - 0.8_RKIND * tracer_shape(1)**2
+            do itracer = 1, config_num_passive_tracers
+               passive_tracers(itracer,k,iCell) = tracer_shape(mod(itracer-1, 3))
+            end do
+         end do
+      end do
+
+   end subroutine init_atm_passive_tracers_dcmip2012_1_2
 
 
    !-----------------------------------------------------------------------
