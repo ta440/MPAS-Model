@@ -31,11 +31,14 @@ run() {   # run <case> <mesh> <extra options...>
 case $SUITE in
    quick)
       run lauritzen_nondiv x1.10242
-      run lauritzen_div x1.10242 ;;
+      run lauritzen_div x1.10242
+      run dcmip2012_1_2 x1.10242 -i 0_12:00:00 ;;
    convergence)
       for case in lauritzen_nondiv lauritzen_div; do
          for mesh in x1.10242 x1.40962 x1.163842; do run $case $mesh; done
-      done ;;
+      done
+      # L30/L60/L120 with the mesh (DCMIP 2012 Table VI); 12-hourly output keeps the files small
+      for mesh in x1.10242 x1.40962 x1.163842; do run dcmip2012_1_2 $mesh -i 0_12:00:00; done ;;
    scaling)
       # Whole blocks of the five tracer shapes; N = 10 stands in for a default MPAS run
       # (about 11 tracers), N = 200 is the upper bound for chemistry
@@ -44,9 +47,10 @@ case $SUITE in
       done ;;
    ranks)
       # Results must not depend on the decomposition: 1 and 4 ranks, all fields bitwise equal
-      for case in lauritzen_nondiv lauritzen_div; do
+      for case in lauritzen_nondiv lauritzen_div dcmip2012_1_2; do
+         opts=(); [ $case = dcmip2012_1_2 ] && opts=(-i 0_12:00:00)
          for n in 1 4; do
-            run $case x1.10242 -n $n -o "$PWD/runs/ranks_${case}_np$n"
+            run $case x1.10242 -n $n "${opts[@]}" -o "$PWD/runs/ranks_${case}_np$n"
          done
          ${PYTHON:-python3} "$HERE/check_kinematic_test.py" --compare "$PWD/runs/ranks_${case}_np1" \
             "$PWD/runs/ranks_${case}_np4" || FAILED+=("ranks $case: 1 and 4 ranks differ")

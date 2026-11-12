@@ -1,5 +1,5 @@
 {
-  "_comment": "l2, l1 and linf errors at T on level 1, from runs of this test suite with init case 14: gfortran 16 -O3, double precision, Apple M3 Pro, 4 ranks, 5 levels, 5 tracers, MPAS-Model branch transport/test-suite 0396a36a4. Keys: case/mesh/dt/rk<config_time_integration_order>/mono or nomono (config_monotonic). Regression tolerance is 1% in l2.",
+  "_comment": "l1, l2 and linf errors at T, volume-weighted over all levels, from runs of this test suite with init case 14: gfortran 16 -O3, double precision, Apple M3 Pro, 4 ranks, MPAS-Model branch transport/test-suite 9a29b72fa plus step 3c. Lauritzen cases: 5 levels, 5 tracers (2D flow, so all levels equal level 1). dcmip2012_1_2: L30/L60/L120 on x1.10242/x1.40962/x1.163842, 3 tracers, plus l2 at T/2 against the exact solution (T_half_exact) and the mixing diagnostics at T/2 in the 4400-5400 m band (mixing_T_half). Keys: case/mesh/dt/rk<config_time_integration_order>/mono or nomono (config_monotonic). Regression tolerance is 1% in l2 and in total mixing (l_r + l_u + l_o).",
   "runs": {
     "lauritzen_div/x1.10242/dt900/rk2/nomono": {
       "gaussian_hills": {
@@ -307,6 +307,93 @@
         "l1": 0.005538907038886329,
         "l2": 0.02396368770123416,
         "linf": 0.26309110465862
+      }
+    },
+    "dcmip2012_1_2/x1.10242/dt300/rk2/mono": {
+      "q1_layer": {
+        "l1": 0.19675386600988437,
+        "l2": 0.2088576051568582,
+        "linf": 0.4481454310823252
+      },
+      "correlated_q1": {
+        "l1": 0.03101065580096299,
+        "l2": 0.07696883867318911,
+        "linf": 0.5037673978853945
+      },
+      "T_half_exact": {
+        "q1_layer": {
+          "l1": 0.12921048085539102,
+          "l2": 0.1444320870990635,
+          "linf": 0.3787845290711324
+        },
+        "correlated_q1": {
+          "l1": 0.028858624976274342,
+          "l2": 0.06652408772725832,
+          "linf": 0.4691672309473743
+        }
+      },
+      "mixing_T_half": {
+        "l_r": 0.0065498505673370205,
+        "l_u": 0.0014329285620068369,
+        "l_o": 0.0
+      }
+    },
+    "dcmip2012_1_2/x1.40962/dt150/rk2/mono": {
+      "q1_layer": {
+        "l1": 0.048858004055599286,
+        "l2": 0.06901214685770496,
+        "linf": 0.20853774552656346
+      },
+      "correlated_q1": {
+        "l1": 0.010132237634960477,
+        "l2": 0.033620221159865495,
+        "linf": 0.3268031600713111
+      },
+      "T_half_exact": {
+        "q1_layer": {
+          "l1": 0.03198733386898704,
+          "l2": 0.049756788768529424,
+          "linf": 0.20861653284498427
+        },
+        "correlated_q1": {
+          "l1": 0.008433385405798303,
+          "l2": 0.02847839353034836,
+          "linf": 0.30637755422332613
+        }
+      },
+      "mixing_T_half": {
+        "l_r": 0.0015600526844821733,
+        "l_u": 0.0007932410053977066,
+        "l_o": 4.574341779321278e-16
+      }
+    },
+    "dcmip2012_1_2/x1.163842/dt75/rk2/mono": {
+      "q1_layer": {
+        "l1": 0.008144695585900703,
+        "l2": 0.012293342609016511,
+        "linf": 0.03768949903281778
+      },
+      "correlated_q1": {
+        "l1": 0.00211239261645087,
+        "l2": 0.008060685017227997,
+        "linf": 0.09268217852913829
+      },
+      "T_half_exact": {
+        "q1_layer": {
+          "l1": 0.0060376194282957246,
+          "l2": 0.0110698181687261,
+          "linf": 0.06585472459713462
+        },
+        "correlated_q1": {
+          "l1": 0.0019376252769840343,
+          "l2": 0.008151255736443432,
+          "linf": 0.12219453048799819
+        }
+      },
+      "mixing_T_half": {
+        "l_r": 0.0003021389147229527,
+        "l_u": 0.0002028377850706728,
+        "l_o": 3.907443540119628e-16
       }
     }
   }

@@ -15,8 +15,8 @@ MPAS_ROOT=$(cd "$HERE/../../.." && pwd)
 MPIRUN=${MPAS_MPIRUN:-mpirun -n}
 PYTHON=${PYTHON:-python3}
 
-CASE=; MESH=; MESH_DIR=; EXE_DIR=$MPAS_ROOT; NRANKS=4; DT=; RKORDER=2; LIMITER=on; NLEV=5; NTRACERS=5
-DURATION=12_00:00:00; OUTPUT_INTERVAL=3_00:00:00; RUN_DIR=
+CASE=; MESH=; MESH_DIR=; EXE_DIR=$MPAS_ROOT; NRANKS=4; DT=; RKORDER=2; LIMITER=on; NLEV=; NTRACERS=
+DURATION=; OUTPUT_INTERVAL=; RUN_DIR=
 
 usage() { sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
@@ -44,15 +44,27 @@ for exe in init_atmosphere_model atmosphere_model; do
    [ -x "$EXE_DIR/$exe" ] || { echo "Missing executable $EXE_DIR/$exe"; exit 2; }
 done
 
-# Default time step: Courant number about 0.35 for the 90 m/s peak wind
-if [ -z "$DT" ]; then
-   case $MESH in
-      x1.10242)  DT=900.0 ;;
-      x1.40962)  DT=450.0 ;;
-      x1.163842) DT=225.0 ;;
-      *) echo "No default time step for mesh $MESH; give one with -t"; exit 2 ;;
-   esac
-fi
+# Per-case defaults, used only where no option was given
+case $CASE in
+   dcmip2012_1_2)
+      # DCMIP 2012 Table VI and VII: 1 day, hourly output, L30/L60/L120 on the 240/120/60 km meshes
+      NTRACERS=${NTRACERS:-3}; DURATION=${DURATION:-1_00:00:00}; OUTPUT_INTERVAL=${OUTPUT_INTERVAL:-0_01:00:00}
+      case $MESH in
+         x1.10242)  NLEV=${NLEV:-30};  DT=${DT:-300.0} ;;
+         x1.40962)  NLEV=${NLEV:-60};  DT=${DT:-150.0} ;;
+         x1.163842) NLEV=${NLEV:-120}; DT=${DT:-75.0} ;;
+      esac ;;
+   *)
+      # Lauritzen et al. (2012): 12 days; dt gives a Courant number about 0.35 for the 90 m/s peak wind
+      NTRACERS=${NTRACERS:-5}; NLEV=${NLEV:-5}; DURATION=${DURATION:-12_00:00:00}; OUTPUT_INTERVAL=${OUTPUT_INTERVAL:-3_00:00:00}
+      case $MESH in
+         x1.10242)  DT=${DT:-900.0} ;;
+         x1.40962)  DT=${DT:-450.0} ;;
+         x1.163842) DT=${DT:-225.0} ;;
+      esac ;;
+esac
+[ -n "$DT" ] || { echo "No default time step for mesh $MESH; give one with -t"; exit 2; }
+[ -n "$NLEV" ] || { echo "No default number of levels for mesh $MESH; give one with -l"; exit 2; }
 
 RUN_DIR=${RUN_DIR:-$PWD/runs/${CASE}_${MESH}_N${NTRACERS}_rk${RKORDER}_lim${LIMITER}}
 mkdir -p "$RUN_DIR"

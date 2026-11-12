@@ -10,10 +10,20 @@ in <run_dir>, prints error norms, mixing diagnostics and checks, writes
 The second form checks that two runs (for example on 1 and 4 MPI ranks) have bitwise
 identical history files in every field. Needs numpy and netCDF4 only.
 
-Tracer n (1-based) has shape mod(n-1, 5): 0 uniform, 1 Gaussian hills, 2 cosine bells,
-3 slotted cylinders, 4 correlated cosine bells (Lauritzen et al. 2012, GMD 5, 887-901).
-Error norms are their eqs. (26)-(28), area-weighted, on level 1. The mixing diagnostics
-(their Sect. 3.5 and Appendix C) use the pair (cosine bells, correlated cosine bells).
+Lauritzen cases (Lauritzen et al. 2012, GMD 5, 887-901): tracer n (1-based) has shape
+mod(n-1, 5): 0 uniform, 1 Gaussian hills, 2 cosine bells, 3 slotted cylinders, 4 correlated
+cosine bells. Error norms are their eqs. (26)-(28). The mixing diagnostics (their Sect. 3.5
+and Appendix C) use the pair (cosine bells, correlated cosine bells) on level 1.
+
+dcmip2012_1_2 (DCMIP 2012 test case document v1.7, Sect. 1.2): tracer n has shape
+mod(n-1, 3): 0 uniform, 1 q1 (the layer of eq. 43), 2 xi = 0.9 - 0.8 q1^2. Error norms are
+DCMIP eq. (14), volume-weighted over all levels, at T against the initial state and at T/2
+against the exact solution in dcmip2012_1_2_exact_T_half.npz (made by dcmip2012_1_2_exact.py).
+Mixing diagnostics for (q1, xi) are reported for the levels in 4400-5400 m and by level, at T/2
+and T. The T/2 norms and the mixing are extensions: DCMIP defines both only for test 1-1.
+
+For the Lauritzen cases the levels are identical copies with uniform thickness, so the
+all-level norms equal the level-1 norms of the paper.
 """
 import glob
 import json
@@ -26,24 +36,39 @@ from netCDF4 import Dataset
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-SHAPES = ["uniform", "gaussian_hills", "cosine_bells", "slotted_cylinders", "correlated_cosine_bells"]
-NSHAPES = len(SHAPES)
-CHI, XI = 2, 4                 # shapes of the correlated pair
+LAURITZEN_SHAPES = ["uniform", "gaussian_hills", "cosine_bells", "slotted_cylinders", "correlated_cosine_bells"]
+DCMIP12_SHAPES = ["uniform", "q1_layer", "correlated_q1"]
 
 # Per case:
+#   shapes            tracer n (0-based) has shape shapes[n % len(shapes)]
+#   pair              (chi, xi) shape indices of the correlated pair, xi = -0.8 chi^2 + 0.9
+#   chi_min           lower end of the pre-existing relation for the mixing diagnostics
 #   period_days       T; the exact solution at T is the initial state
 #   levels_identical  2D cases run as copies on every level, which must stay bitwise identical
 #   rho0_one          the model sets rho_zz = 1 before the first transport step; the t = 0
 #                     history file still holds the density of the init file, so the mass
 #                     baseline uses rho_zz = 1
-#   rho_const         rho_zz must stay exactly 1 (non-divergent flow)
+#   rho_const         rho_zz must stay bitwise equal to its t = 0 value (non-divergent flow)
 #   rho_exact_at_T    exact rho_zz at T, for the density error (divergent flow)
 #   mixing            compute the mixing diagnostics at T/2
+#   mixing_band_m     None: level 1 only (2D cases). (z0, z1): the levels with midpoints in
+#                     [z0, z1] m form the headline value; a profile by level is also reported
+#   exact_T_half      check file with the exact solution at T/2 (None: not available)
 CASES = {
-    "lauritzen_nondiv": {"period_days": 12.0, "levels_identical": True, "rho0_one": True,
-                         "rho_const": True, "rho_exact_at_T": None, "mixing": True},
-    "lauritzen_div":    {"period_days": 12.0, "levels_identical": True, "rho0_one": True,
-                         "rho_const": False, "rho_exact_at_T": 1.0, "mixing": False},
+    "lauritzen_nondiv": {"shapes": LAURITZEN_SHAPES, "pair": (2, 4), "chi_min": 0.1,
+                         "period_days": 12.0, "levels_identical": True, "rho0_one": True,
+                         "rho_const": True, "rho_exact_at_T": None, "mixing": True,
+                         "mixing_band_m": None, "exact_T_half": None},
+    "lauritzen_div":    {"shapes": LAURITZEN_SHAPES, "pair": (2, 4), "chi_min": 0.1,
+                         "period_days": 12.0, "levels_identical": True, "rho0_one": True,
+                         "rho_const": False, "rho_exact_at_T": 1.0, "mixing": False,
+                         "mixing_band_m": None, "exact_T_half": None},
+    # DCMIP 2012 test case document v1.7, Sect. 1.2; mixing (their eq. 173, chi_min = 0) and the
+    # exact solution at T/2 are extensions: DCMIP defines both only for test 1-1
+    "dcmip2012_1_2":    {"shapes": DCMIP12_SHAPES, "pair": (1, 2), "chi_min": 0.0,
+                         "period_days": 1.0, "levels_identical": False, "rho0_one": False,
+                         "rho_const": True, "rho_exact_at_T": None, "mixing": True,
+                         "mixing_band_m": (4400.0, 5400.0), "exact_T_half": "dcmip2012_1_2_exact_T_half.npz"},
 }
 
 TOL_UNIFORM = 1.0e-12      # max |q - 1| for the uniform tracer (roundoff grows with the step count: 1.3e-13 for lauritzen_div at 60 km)
@@ -79,6 +104,18 @@ def file_day(path):
     leap = (y % 4 == 0 and y % 100 != 0) or y % 400 == 0
     months = [31, 29 if leap else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
     return sum(months[:mo - 1]) + int(dd) - 1 + (h + m / 60.0 + sec / 3600.0) / 24.0
+
+
+def tracer_mass(area, rdz, q):
+    """sum over cells and levels of area * rho_zz * dzeta * q, per tracer.
+
+    rdz = rho_zz * dzeta (nCells, nLev); q (nCells, nLev, N). Each tracer's products are made
+    contiguous and summed with numpy's pairwise summation (relative error about 1e-16 log n).
+    A 3-operand einsum, or a sum over a strided or leading axis, adds term by term and gives
+    noise near 1e-12, the size of the conservation tolerance.
+    """
+    w = area[:, None] * rdz
+    return np.array([np.sum(np.ascontiguousarray(q[:, :, n]) * w) for n in range(q.shape[2])])
 
 
 def norms(q, qe, w):
@@ -176,6 +213,9 @@ def main(run_dir):
     if case not in CASES:
         sys.exit(f"Unknown or missing config_kinematic_case '{case}' in namelist.atmosphere")
     spec = CASES[case]
+    shapes = spec["shapes"]
+    nshapes = len(shapes)
+    chi_idx, xi_idx = spec["pair"]
     monotonic = nml.get("config_monotonic", "true").lower() in ("true", ".true.", "t")
     dt = float(nml["config_dt"])
     rk_order = int(nml.get("config_time_integration_order", "2"))   # MPAS default is 2
@@ -189,13 +229,19 @@ def main(run_dir):
 
     with Dataset(files[0]) as g:
         area = g["areaCell"][:]
+        lat_deg = np.degrees(g["latCell"][:])
         ncells = area.size
         nlev = g.dimensions["nVertLevels"].size
         # The model conserves sum(area * rho_zz * q * dzeta), with dzeta = 1/rdzw the
         # thickness in the vertical coordinate (the same in every column). Without rdzw in
         # the output, equal level weights are used, which is exact when no vertical flux.
         dz_level = 1.0 / g["rdzw"][:] if "rdzw" in g.variables else np.ones(nlev)
+        # Layer-midpoint heights (flat terrain: column 1), for the mixing band and the exact solution
+        z_mid = 0.5 * (g["zgrid"][0, 1:] + g["zgrid"][0, :-1]) if "zgrid" in g.variables else None
     dzeta = np.broadcast_to(dz_level, (ncells, nlev))
+    # Volume weights for the error norms over all levels (DCMIP 2012 eq. 14); for the 2D cases
+    # (identical levels, uniform dzeta) they give the level-1 norms of Lauritzen et al. (2012)
+    wvol = area[:, None] * dz_level[None, :]
     mesh = os.path.basename(glob.glob(os.path.join(run_dir, "*.grid.nc"))[0]).replace(".grid.nc", "")
 
     def load(fn):
@@ -205,7 +251,7 @@ def main(run_dir):
     q0, r0 = load(files[0])
     if spec["rho0_one"]:
         r0 = np.ones_like(r0)
-    mass0 = np.einsum("c,ck,ckn->n", area, r0 * dzeta, q0)
+    mass0 = tracer_mass(area, r0 * dzeta, q0)
     lo0, hi0 = q0.min(axis=(0, 1)), q0.max(axis=(0, 1))
 
     checks = {}
@@ -215,18 +261,18 @@ def main(run_dir):
         if prev is None or (prev["pass"] and not ok) or (ok == prev["pass"] and value > prev["value"]):
             checks[name] = {"pass": bool(ok), "value": float(value)}
 
-    uniform = [n for n in range(ntracers) if n % NSHAPES == 0]
+    uniform = [n for n in range(ntracers) if n % nshapes == 0]
     for i, fn in enumerate(files):
         q, r = load(fn)
         if i == 0 and spec["rho0_one"]:
             r = r0
         if spec["rho_const"] and i > 0:
-            e = float(np.max(np.abs(r - 1.0)))
-            record("rho_zz_equals_1", e == 0.0, e)
+            e = float(np.max(np.abs(r - r0)))
+            record("rho_zz_constant", e == 0.0, e)
         if uniform:
             e = float(np.max(np.abs(q[:, :, uniform] - 1.0)))
             record("uniform_tracer", e < TOL_UNIFORM, e)
-        mass = np.einsum("c,ck,ckn->n", area, r * dzeta, q)
+        mass = tracer_mass(area, r * dzeta, q)
         rel = float(np.max(np.abs(mass - mass0) / np.abs(mass0)))
         record("mass_conservation", rel < TOL_MASS, rel)
         if monotonic:
@@ -235,8 +281,8 @@ def main(run_dir):
             above = np.maximum(q.max(axis=(0, 1)) - hi0, 0.0) / rng
             over = float(np.max(np.maximum(under, above)))
             record("shape_preservation", over < TOL_BOUNDS, over)
-        if ntracers > NSHAPES:
-            same = all(np.array_equal(q[:, :, n], q[:, :, n - NSHAPES]) for n in range(NSHAPES, ntracers))
+        if ntracers > nshapes:
+            same = all(np.array_equal(q[:, :, n], q[:, :, n - nshapes]) for n in range(nshapes, ntracers))
             record("identical_copies", same, 0.0 if same else 1.0)
         if spec["levels_identical"] and nlev > 1:
             same = all(np.array_equal(q[:, k, :], q[:, 0, :]) for k in range(1, nlev))
@@ -244,35 +290,78 @@ def main(run_dir):
 
     period = spec["period_days"]
 
-    # Error norms at T (and the density error, where the exact density at T is known)
+    # Error norms at T over all levels (and the density error, where the exact density at T is known)
     errors, rho_error = {}, None
     at_T = abs(days[-1] - period) < 1e-9
     if at_T:
         qT, rT = load(files[-1])
-        for s in range(1, min(NSHAPES, ntracers)):
-            errors[SHAPES[s]] = dict(zip(("l1", "l2", "linf"), norms(qT[:, 0, s], q0[:, 0, s], area)))
+        for s in range(1, min(nshapes, ntracers)):
+            errors[shapes[s]] = dict(zip(("l1", "l2", "linf"), norms(qT[:, :, s], q0[:, :, s], wvol)))
         if spec["rho_exact_at_T"] is not None:
             d = rT[:, 0] - spec["rho_exact_at_T"]
             rho_error = {"max_abs": float(np.max(np.abs(d))),
                          "rms": float(np.sqrt(np.sum(area * d**2) / np.sum(area)))}
 
-    # Mixing diagnostics at T/2 for the correlated pair (first copy)
-    mixing = None
+    # Mixing diagnostics for the correlated pair (first copy): at T/2, and at T for 3D cases
     half = [f for f, t in zip(files, days) if abs(t - 0.5 * period) < 1e-9]
-    if spec["mixing"] and half and ntracers > XI:
-        qh, _ = load(half[0])
-        mixing = mixing_diagnostics(qh[:, 0, CHI], qh[:, 0, XI], area)
+    band = None
+    if spec["mixing_band_m"] is not None and z_mid is not None:
+        z0, z1 = spec["mixing_band_m"]
+        band = np.where((z_mid >= z0) & (z_mid <= z1))[0]
 
-    # Regression against references.json
+    def mixing_at(fn, save=None):
+        q, _ = load(fn)
+        chi, xi = q[:, :, chi_idx], q[:, :, xi_idx]
+        mix = lambda c, x, w: mixing_diagnostics(c, x, w, chi_min=spec["chi_min"])
+        if spec["mixing_band_m"] is None:
+            return mix(chi[:, 0], xi[:, 0], area), None
+        headline = mix(chi[:, band].ravel(), xi[:, band].ravel(), wvol[:, band].ravel())
+        profile = [dict(mix(chi[:, k], xi[:, k], area), z_m=float(z_mid[k])) for k in range(nlev)]
+        if save:
+            np.savez(save, chi=chi[:, band].ravel(), xi=xi[:, band].ravel(), w=wvol[:, band].ravel(),
+                     band_m=np.array(spec["mixing_band_m"]))
+        return headline, profile
+
+    mixing = mixing_profile = mixing_T = mixing_T_profile = None
+    if spec["mixing"] and ntracers > xi_idx and (spec["mixing_band_m"] is None or band is not None and band.size):
+        if half:
+            mixing, mixing_profile = mixing_at(half[0], save=os.path.join(run_dir, "mixing_T_half.npz")
+                                               if band is not None else None)
+        if at_T and band is not None:
+            mixing_T, mixing_T_profile = mixing_at(files[-1])
+
+    # Error norms at T/2 against the exact solution, where a check file is shipped
+    errors_half = {}
+    if spec["exact_T_half"] and half and z_mid is not None and ntracers > xi_idx:
+        tab = np.load(os.path.join(HERE, spec["exact_T_half"]))
+        key = f"L{nlev}"
+        zdiff = float(np.max(np.abs(tab[f"z_{key}"] - z_mid))) if f"z_{key}" in tab else np.inf
+        record("exact_solution_levels", zdiff < 1e-6 * float(tab["ztop"]), min(zdiff, 1e30))
+        if zdiff < 1e-6 * float(tab["ztop"]):
+            q1_tab = tab[f"q1_{key}"].astype(np.float64)
+            qe = np.stack([np.interp(lat_deg, tab["lat_deg"], q1_tab[:, k]) for k in range(nlev)], axis=1)
+            qh, _ = load(half[0])
+            errors_half[shapes[chi_idx]] = dict(zip(("l1", "l2", "linf"), norms(qh[:, :, chi_idx], qe, wvol)))
+            errors_half[shapes[xi_idx]] = dict(zip(("l1", "l2", "linf"),
+                                                   norms(qh[:, :, xi_idx], -0.8 * qe**2 + 0.9, wvol)))
+
+    # Regression against references.json: l2 at T, l2 at T/2 against the exact solution, and the
+    # total mixing (l_r + l_u + l_o) of the headline band at T/2
     regression = None
     ref_path = os.path.join(HERE, "references.json")
     if at_T and os.path.exists(ref_path):
         key = f"{case}/{mesh}/dt{dt:g}/rk{rk_order}/{'mono' if monotonic else 'nomono'}"
         ref = json.load(open(ref_path)).get("runs", {}).get(key)
         if ref:
-            common = [s for s in errors if s in ref]
-            worst = max(abs(errors[s]["l2"] - ref[s]["l2"]) / ref[s]["l2"] for s in common)
-            record("regression_l2", worst < TOL_REGRESSION, worst)
+            rel = [abs(errors[s]["l2"] - ref[s]["l2"]) / ref[s]["l2"] for s in errors if s in ref]
+            rel += [abs(errors_half[s]["l2"] - ref["T_half_exact"][s]["l2"]) / ref["T_half_exact"][s]["l2"]
+                    for s in errors_half if s in ref.get("T_half_exact", {})]
+            if rel:
+                record("regression_l2", max(rel) < TOL_REGRESSION, max(rel))
+            if mixing and "mixing_T_half" in ref:
+                tot = lambda m: m["l_r"] + m["l_u"] + m["l_o"]
+                e = abs(tot(mixing) - tot(ref["mixing_T_half"])) / tot(ref["mixing_T_half"])
+                record("regression_mixing", e < TOL_REGRESSION, e)
             regression = key
 
     # Cost from the MPAS timers (task 0)
@@ -299,9 +388,15 @@ def main(run_dir):
     if rho_error:
         print(f"\n  density at T (exact {spec['rho_exact_at_T']:g}): max error {rho_error['max_abs']:.3e}, "
               f"rms error {rho_error['rms']:.3e}")
-    if mixing:
-        print(f"\n  mixing at T/2, pair (cosine bells, correlated cosine bells): "
-              f"l_r {mixing['l_r']:.3e}  l_u {mixing['l_u']:.3e}  l_o {mixing['l_o']:.3e}")
+    if errors_half:
+        print(f"\n  {'shape at T/2, vs exact':<26}{'l1':>11}{'l2':>11}{'linf':>11}")
+        for s, e in errors_half.items():
+            print(f"  {s:<26}{e['l1']:11.3e}{e['l2']:11.3e}{e['linf']:11.3e}")
+    where = "level 1" if band is None else f"levels {band[0]+1}-{band[-1]+1} ({spec['mixing_band_m'][0]:g}-{spec['mixing_band_m'][1]:g} m)"
+    for label, m in (("T/2", mixing), ("T", mixing_T)):
+        if m:
+            print(f"\n  mixing at {label}, pair ({shapes[chi_idx]}, {shapes[xi_idx]}), {where}: "
+                  f"l_r {m['l_r']:.3e}  l_u {m['l_u']:.3e}  l_o {m['l_o']:.3e}")
     print(f"\n  {'check':<22}{'value':>11}  result")
     for name, c in checks.items():
         print(f"  {name:<22}{c['value']:11.2e}  {'pass' if c['pass'] else 'FAIL'}")
@@ -316,7 +411,9 @@ def main(run_dir):
 
     results = {"case": case, "mesh": mesh, "dt": dt, "rk_order": rk_order, "nlev": nlev, "ntracers": ntracers,
                "run_days": run_days, "monotonic": monotonic, "nranks": nranks,
-               "errors_at_T": errors, "density_error_at_T": rho_error, "mixing_at_T_half": mixing,
+               "errors_at_T": errors, "errors_at_T_half_exact": errors_half, "density_error_at_T": rho_error,
+               "mixing_at_T_half": mixing, "mixing_by_level_T_half": mixing_profile,
+               "mixing_at_T": mixing_T, "mixing_by_level_T": mixing_T_profile,
                "checks": checks, "regression_key": regression,
                "timers_s": timers, "cost_core_us_per_cell_level_tracer_step": cost, "pass": ok}
     with open(os.path.join(run_dir, "results.json"), "w") as f:

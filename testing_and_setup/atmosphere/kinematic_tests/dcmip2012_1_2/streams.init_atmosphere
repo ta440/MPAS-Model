@@ -1,0 +1,12 @@
+<streams>
+<immutable_stream name="input"
+                  type="input"
+                  filename_template="@MESH@.grid.nc"
+                  input_interval="initial_only" />
+
+<immutable_stream name="output"
+                  type="output"
+                  filename_template="@MESH@.init.nc"
+                  packages="initial_conds"
+                  output_interval="initial_only" />
+</streams>
