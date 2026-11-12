@@ -3023,10 +3023,10 @@ module atm_time_integration
       integer, dimension(:), pointer :: edgeThreadStart
       integer, dimension(:), pointer :: edgeThreadEnd
 
-      integer, pointer :: config_fct_block_size
-      logical :: use_blocked_fct
-      real (kind=RKIND), dimension(:,:,:), allocatable :: sold_blk, snew_blk, s_max_blk, s_min_blk
-      real (kind=RKIND), dimension(:,:,:), allocatable :: wdtn_blk, flux_blk, flux_upwind_blk, flux_tmp_blk
+      integer, pointer :: config_fct_tracer_chunk
+      logical :: use_chunked_fct
+      real (kind=RKIND), dimension(:,:,:), allocatable :: sold_chk, snew_chk, s_max_chk, s_min_chk
+      real (kind=RKIND), dimension(:,:,:), allocatable :: wdtn_chk, flux_chk, flux_upwind_chk, flux_tmp_chk
 
 
       if (rk_step < 3 .or. (.not. config_monotonic .and. .not. config_positive_definite)) then
@@ -3061,8 +3061,8 @@ module atm_time_integration
       nVertLevels = nVertLevels_ptr
       num_scalars = num_scalars_ptr
 
-      call mpas_pool_get_config(block % configs, 'config_fct_block_size', config_fct_block_size)
-      use_blocked_fct = config_fct_block_size > 0 .and. &
+      call mpas_pool_get_config(block % configs, 'config_fct_tracer_chunk', config_fct_tracer_chunk)
+      use_chunked_fct = config_fct_tracer_chunk > 0 .and. &
                         .not. (rk_step < 3 .or. (.not. config_monotonic .and. .not. config_positive_definite))
 
       allocate(scalar_old_arr(nVertLevels,nCells+1))
@@ -3115,23 +3115,23 @@ module atm_time_integration
             flux_tmp_arr(k,nEdges+1) = 0.0_RKIND
          end do
          !$acc end parallel
-         if (use_blocked_fct) then
-            allocate(sold_blk(config_fct_block_size,nVertLevels,nCells+1))
-            allocate(snew_blk(config_fct_block_size,nVertLevels,nCells+1))
-            allocate(s_max_blk(config_fct_block_size,nVertLevels,nCells+1))
-            allocate(s_min_blk(config_fct_block_size,nVertLevels,nCells+1))
-            allocate(wdtn_blk(config_fct_block_size,nVertLevels+1,nCells+1))
-            allocate(flux_blk(config_fct_block_size,nVertLevels,nEdges+1))
-            allocate(flux_upwind_blk(config_fct_block_size,nVertLevels,nEdges+1))
-            allocate(flux_tmp_blk(config_fct_block_size,nVertLevels,nEdges+1))
-            sold_blk(:,:,nCells+1) = 0.0_RKIND
-            snew_blk(:,:,nCells+1) = 0.0_RKIND
-            s_max_blk(:,:,nCells+1) = 0.0_RKIND
-            s_min_blk(:,:,nCells+1) = 0.0_RKIND
-            wdtn_blk(:,:,nCells+1) = 0.0_RKIND
-            flux_blk(:,:,nEdges+1) = 0.0_RKIND
-            flux_upwind_blk(:,:,nEdges+1) = 0.0_RKIND
-            flux_tmp_blk(:,:,nEdges+1) = 0.0_RKIND
+         if (use_chunked_fct) then
+            allocate(sold_chk(config_fct_tracer_chunk,nVertLevels,nCells+1))
+            allocate(snew_chk(config_fct_tracer_chunk,nVertLevels,nCells+1))
+            allocate(s_max_chk(config_fct_tracer_chunk,nVertLevels,nCells+1))
+            allocate(s_min_chk(config_fct_tracer_chunk,nVertLevels,nCells+1))
+            allocate(wdtn_chk(config_fct_tracer_chunk,nVertLevels+1,nCells+1))
+            allocate(flux_chk(config_fct_tracer_chunk,nVertLevels,nEdges+1))
+            allocate(flux_upwind_chk(config_fct_tracer_chunk,nVertLevels,nEdges+1))
+            allocate(flux_tmp_chk(config_fct_tracer_chunk,nVertLevels,nEdges+1))
+            sold_chk(:,:,nCells+1) = 0.0_RKIND
+            snew_chk(:,:,nCells+1) = 0.0_RKIND
+            s_max_chk(:,:,nCells+1) = 0.0_RKIND
+            s_min_chk(:,:,nCells+1) = 0.0_RKIND
+            wdtn_chk(:,:,nCells+1) = 0.0_RKIND
+            flux_chk(:,:,nEdges+1) = 0.0_RKIND
+            flux_upwind_chk(:,:,nEdges+1) = 0.0_RKIND
+            flux_tmp_chk(:,:,nEdges+1) = 0.0_RKIND
          end if
       end if
 
@@ -3148,15 +3148,15 @@ module atm_time_integration
                                      cellSolveThreadStart(thread), cellSolveThreadEnd(thread), &
                                      horiz_flux_array, rk_step, config_time_integration_order, &
                                      advance_density=config_split_dynamics_transport)
-         else if (use_blocked_fct) then
-            call atm_advance_scalars_mono_blocked(field_name, block, tend, state, diag, mesh, halo_scratch, &
+         else if (use_chunked_fct) then
+            call atm_advance_scalars_mono_chunked(field_name, block, tend, state, diag, mesh, halo_scratch, &
                                           block % configs, rk_timestep(rk_step), &
                                           cellThreadStart(thread), cellThreadEnd(thread), &
                                           edgeThreadStart(thread), edgeThreadEnd(thread), &
                                           cellSolveThreadStart(thread), cellSolveThreadEnd(thread), &
-                                          config_fct_block_size, &
-                                          sold_blk, snew_blk, s_max_blk, s_min_blk, wdtn_blk, &
-                                          flux_blk, flux_upwind_blk, flux_tmp_blk, config_gpu_aware_mpi, &
+                                          config_fct_tracer_chunk, &
+                                          sold_chk, snew_chk, s_max_chk, s_min_chk, wdtn_chk, &
+                                          flux_chk, flux_upwind_chk, flux_tmp_chk, config_gpu_aware_mpi, &
                                           exchange_halo_group, &
                                           advance_density=config_split_dynamics_transport, rho_zz_int=rho_zz_int)
          else
@@ -3186,9 +3186,9 @@ module atm_time_integration
       else
          deallocate(flux_upwind_tmp_arr)
          deallocate(flux_tmp_arr)
-         if (use_blocked_fct) then
-            deallocate(sold_blk, snew_blk, s_max_blk, s_min_blk, wdtn_blk)
-            deallocate(flux_blk, flux_upwind_blk, flux_tmp_blk)
+         if (use_chunked_fct) then
+            deallocate(sold_chk, snew_chk, s_max_chk, s_min_chk, wdtn_chk)
+            deallocate(flux_chk, flux_upwind_chk, flux_tmp_chk)
          end if
       end if
 
@@ -5902,20 +5902,20 @@ module atm_time_integration
 
 
    !-----------------------------------------------------------------------
-   !  routine atm_advance_scalars_mono_blocked
+   !  routine atm_advance_scalars_mono_chunked
    !
-   !> \brief Wrapper for atm_advance_scalars_mono_blocked_work
+   !> \brief Wrapper for atm_advance_scalars_mono_chunked_work
    !> \details
    !>  Same role as atm_advance_scalars_mono: dereferences the fields that the
-   !>  work routine needs. Used when config_fct_block_size > 0. The work arrays
-   !>  carry a leading tracer-block dimension of size block_size.
+   !>  work routine needs. Used when config_fct_tracer_chunk > 0. The work arrays
+   !>  carry a leading tracer-chunk dimension of size chunk_size.
    !
    !-----------------------------------------------------------------------
-   subroutine atm_advance_scalars_mono_blocked(field_name, block, tend, state, diag, mesh, halo_scratch, configs, dt, &
+   subroutine atm_advance_scalars_mono_chunked(field_name, block, tend, state, diag, mesh, halo_scratch, configs, dt, &
                                        cellStart, cellEnd, edgeStart, edgeEnd, &
-                                       cellSolveStart, cellSolveEnd, block_size, &
-                                       sold_b, snew_b, s_max_b, s_min_b, wdtn_b, flux_b, &
-                                       flux_upwind_b, flux_tmp_b, config_gpu_aware_mpi, exchange_halo_group, &
+                                       cellSolveStart, cellSolveEnd, chunk_size, &
+                                       sold_chk, snew_chk, s_max_chk, s_min_chk, wdtn_chk, flux_chk, &
+                                       flux_upwind_chk, flux_tmp_chk, config_gpu_aware_mpi, exchange_halo_group, &
                                        advance_density, rho_zz_int)
 
       implicit none
@@ -5932,12 +5932,12 @@ module atm_time_integration
       real (kind=RKIND), intent(in)        :: dt
       integer, intent(in) :: cellStart, cellEnd, edgeStart, edgeEnd
       integer, intent(in) :: cellSolveStart, cellSolveEnd
-      integer, intent(in) :: block_size
-      real (kind=RKIND), dimension(:,:,:), intent(inout) :: sold_b, snew_b
-      real (kind=RKIND), dimension(:,:,:), intent(inout) :: s_max_b, s_min_b
-      real (kind=RKIND), dimension(:,:,:), intent(inout) :: wdtn_b
-      real (kind=RKIND), dimension(:,:,:), intent(inout) :: flux_b
-      real (kind=RKIND), dimension(:,:,:), intent(inout) :: flux_upwind_b, flux_tmp_b
+      integer, intent(in) :: chunk_size
+      real (kind=RKIND), dimension(:,:,:), intent(inout) :: sold_chk, snew_chk
+      real (kind=RKIND), dimension(:,:,:), intent(inout) :: s_max_chk, s_min_chk
+      real (kind=RKIND), dimension(:,:,:), intent(inout) :: wdtn_chk
+      real (kind=RKIND), dimension(:,:,:), intent(inout) :: flux_chk
+      real (kind=RKIND), dimension(:,:,:), intent(inout) :: flux_upwind_chk, flux_tmp_chk
       logical, intent(in) :: config_gpu_aware_mpi
       procedure (halo_exchange_routine) :: exchange_halo_group
       logical, intent(in), optional :: advance_density
@@ -5970,7 +5970,7 @@ module atm_time_integration
       real (kind=RKIND), dimension(:,:,:), pointer :: scale_in_arr, scale_out_arr
 
 #ifdef MPAS_OPENACC
-      call mpas_log_write('config_fct_block_size > 0 is not yet supported in OpenACC builds', messageType=MPAS_LOG_CRIT)
+      call mpas_log_write('config_fct_tracer_chunk > 0 is not yet supported in OpenACC builds', messageType=MPAS_LOG_CRIT)
 #endif
 
       call mpas_pool_get_config(configs, 'config_coef_3rd_order', coef_3rd_order)
@@ -6015,46 +6015,46 @@ module atm_time_integration
       call mpas_pool_get_array(halo_scratch, 'scale_in', scale_in_arr)
       call mpas_pool_get_array(halo_scratch, 'scale_out', scale_out_arr)
 
-      call atm_advance_scalars_mono_blocked_work(block, nCells, nEdges, num_scalars, block_size, dt, &
+      call atm_advance_scalars_mono_chunked_work(block, nCells, nEdges, num_scalars, chunk_size, dt, &
                                    cellStart, cellEnd, edgeStart, edgeEnd, &
                                    cellSolveStart, cellSolveEnd, &
                                    coef_3rd_order, nCellsSolve, uhAvg, wwAvg, scalar_tend, rho_zz_old, &
                                    rho_zz_new, scalars_old, scalars_new, invAreaCell, dvEdge, cellsOnEdge, cellsOnCell, &
                                    edgesOnCell, edgesOnCell_sign, nEdgesOnCell, fnm, fnp, rdnw, nAdvCellsForEdge, &
-                                   advCellsForEdge, adv_coefs, adv_coefs_3rd, sold_b, snew_b, s_max_b, s_min_b, &
-                                   wdtn_b, scale_in_arr, scale_out_arr, flux_b, flux_upwind_b, flux_tmp_b, &
+                                   advCellsForEdge, adv_coefs, adv_coefs_3rd, sold_chk, snew_chk, s_max_chk, s_min_chk, &
+                                   wdtn_chk, scale_in_arr, scale_out_arr, flux_chk, flux_upwind_chk, flux_tmp_chk, &
                                    bdyMaskCell, bdyMaskEdge, config_gpu_aware_mpi, &
                                    exchange_halo_group, field_name, advance_density, rho_zz_int)
 
       call mpas_deallocate_scratch_field(scale_in)
       call mpas_deallocate_scratch_field(scale_out)
 
-   end subroutine atm_advance_scalars_mono_blocked
+   end subroutine atm_advance_scalars_mono_chunked
 
 
    !-----------------------------------------------------------------------
-   !  routine atm_advance_scalars_mono_blocked_work
+   !  routine atm_advance_scalars_mono_chunked_work
    !
-   !> \brief FCT (monotonic) transport stage with tracers processed in blocks
+   !> \brief FCT (monotonic) transport stage with tracers processed in chunks
    !> \details
    !>  A reordering of atm_advance_scalars_mono_work. The arithmetic applied to
    !>  each tracer is the same, term by term and in the same order. Differences:
    !>
-   !>   - Tracers are processed in blocks of up to block_size, with the tracer
+   !>   - Tracers are processed in chunks of up to chunk_size, with the tracer
    !>     index innermost in every loop nest (loop order iCell or iEdge, then k,
    !>     then the tracer within the block, iS).
    !>   - Quantities that depend only on the wind and the mesh (upwind
    !>     direction, stencil weights, boundary masks) are evaluated once per
-   !>     edge and level and shared by all tracers in the block.
-   !>   - The scale factors of all tracers in a block are exchanged in one halo
-   !>     exchange (group 'dynamics:scale_blk'), so there are
-   !>     ceiling(num_scalars/block_size) exchanges per call, not num_scalars.
+   !>     edge and level and shared by all tracers in the chunk.
+   !>   - The scale factors of all tracers in a chunk are exchanged in one halo
+   !>     exchange (group 'dynamics:scale_chk'), so there are
+   !>     ceiling(num_scalars/chunk_size) exchanges per call, not num_scalars.
    !>
    !>  OpenACC directives are not included yet; the wrapper stops in OpenACC
    !>  builds. The DEBUG_TRANSPORT diagnostics of the original are not included.
    !
    !-----------------------------------------------------------------------
-   subroutine atm_advance_scalars_mono_blocked_work(block, nCells, nEdges, num_scalars, block_size, dt, &
+   subroutine atm_advance_scalars_mono_chunked_work(block, nCells, nEdges, num_scalars, chunk_size, dt, &
                                    cellStart, cellEnd, edgeStart, edgeEnd, &
                                    cellSolveStart, cellSolveEnd, &
                                    coef_3rd_order, nCellsSolve, uhAvg, wwAvg, scalar_tend, rho_zz_old, &
@@ -6073,7 +6073,7 @@ module atm_time_integration
       integer, intent(in)                  :: nCells           ! for allocating stack variables
       integer, intent(in)                  :: nEdges           ! for allocating stack variables
       integer, intent(in)                  :: num_scalars
-      integer, intent(in)                  :: block_size
+      integer, intent(in)                  :: chunk_size
       real (kind=RKIND), intent(in)        :: dt
       integer, intent(in) :: cellStart, cellEnd, edgeStart, edgeEnd
       integer, intent(in) :: cellSolveStart, cellSolveEnd
@@ -6097,13 +6097,13 @@ module atm_time_integration
       real (kind=RKIND), dimension(:,:), intent(in) :: adv_coefs, adv_coefs_3rd
       real (kind=RKIND), dimension(num_scalars,nVertLevels,nCells+1), intent(inout) :: scalars_old, scalars_new
 
-      ! Work arrays: leading dimension is the tracer within the block
-      real (kind=RKIND), dimension(block_size,nVertLevels,nCells+1), intent(inout) :: sold, snew
-      real (kind=RKIND), dimension(block_size,nVertLevels,nCells+1), intent(inout) :: s_max, s_min
-      real (kind=RKIND), dimension(block_size,nVertLevels+1,nCells+1), intent(inout) :: wdtn
-      real (kind=RKIND), dimension(block_size,nVertLevels,nCells+1), intent(inout) :: scale_in, scale_out
-      real (kind=RKIND), dimension(block_size,nVertLevels,nEdges+1), intent(inout) :: flux_arr
-      real (kind=RKIND), dimension(block_size,nVertLevels,nEdges+1), intent(inout) :: flux_upwind_tmp, flux_tmp
+      ! Work arrays: leading dimension is the tracer within the chunk
+      real (kind=RKIND), dimension(chunk_size,nVertLevels,nCells+1), intent(inout) :: sold, snew
+      real (kind=RKIND), dimension(chunk_size,nVertLevels,nCells+1), intent(inout) :: s_max, s_min
+      real (kind=RKIND), dimension(chunk_size,nVertLevels+1,nCells+1), intent(inout) :: wdtn
+      real (kind=RKIND), dimension(chunk_size,nVertLevels,nCells+1), intent(inout) :: scale_in, scale_out
+      real (kind=RKIND), dimension(chunk_size,nVertLevels,nEdges+1), intent(inout) :: flux_arr
+      real (kind=RKIND), dimension(chunk_size,nVertLevels,nEdges+1), intent(inout) :: flux_upwind_tmp, flux_tmp
 
       integer, intent(in) :: nCellsSolve
 
@@ -6121,7 +6121,7 @@ module atm_time_integration
       integer :: c1, c2, c3, c4, c5, c6
       real (kind=RKIND) :: flux, scalar_weight
 
-      real (kind=RKIND), dimension(block_size,nVertLevels) :: flux_upwind_arr
+      real (kind=RKIND), dimension(chunk_size,nVertLevels) :: flux_upwind_arr
       real (kind=RKIND) :: flux3, flux4, flux_upwind
       real (kind=RKIND) :: q_im2, q_im1, q_i, q_ip1, ua, coef3
       real (kind=RKIND) :: scale_factor
@@ -6170,7 +6170,7 @@ module atm_time_integration
 
       if (local_advance_density) then
          if (.not.present(rho_zz_int)) then
-            call mpas_log_write('Error: rho_zz_int not supplied to atm_advance_scalars_mono_blocked_work( ) when advance_density=.true.', &
+            call mpas_log_write('Error: rho_zz_int not supplied to atm_advance_scalars_mono_chunked_work( ) when advance_density=.true.', &
                                 messageType=MPAS_LOG_CRIT)
          end if
 
@@ -6200,12 +6200,12 @@ module atm_time_integration
       !
       ! Loop over blocks of tracers: iS0 is the offset of the block, nb its size
       !
-      do iS0 = 0, num_scalars-1, block_size
+      do iS0 = 0, num_scalars-1, chunk_size
 
-         nb = min(block_size, num_scalars - iS0)
+         nb = min(chunk_size, num_scalars - iS0)
 
          !
-         ! Copy the block into the work arrays (contiguous: nb consecutive tracers)
+         ! Copy the chunk into the work arrays (contiguous: nb consecutive tracers)
          !
          do iCell=cellStart,cellEnd
             do k=1,nVertLevels
@@ -6494,12 +6494,12 @@ module atm_time_integration
          end if
 
          !
-         !  communicate the scale factors of all tracers in the block: one exchange per block
-         !  (when nb < block_size the unused entries nb+1:block_size are also sent but never read)
+         !  communicate the scale factors of all tracers in the chunk: one exchange per chunk
+         !  (when nb < chunk_size the unused entries nb+1:chunk_size are also sent but never read)
          !
 !$OMP BARRIER
 !$OMP MASTER
-         call exchange_halo_group(block % domain, 'dynamics:scale_blk', config_gpu_aware_mpi)
+         call exchange_halo_group(block % domain, 'dynamics:scale_chk', config_gpu_aware_mpi)
 !$OMP END MASTER
 !$OMP BARRIER
 
@@ -6608,9 +6608,9 @@ module atm_time_integration
             end if
          end do
 
-      end do !  loop over blocks of tracers
+      end do !  loop over chunks of tracers
 
-   end subroutine atm_advance_scalars_mono_blocked_work
+   end subroutine atm_advance_scalars_mono_chunked_work
 
 
    subroutine atm_compute_dyn_tend(tend, tend_physics, state, diag, mesh, diag_physics, configs, nVertLevels, rk_step, dynamics_substep, dt, &

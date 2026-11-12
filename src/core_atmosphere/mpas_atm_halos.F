@@ -50,7 +50,7 @@ module mpas_atm_halos
       character(len=StrKIND), pointer :: config_halo_exch_method
       integer, pointer :: config_num_passive_tracers
       character(len=StrKIND), pointer :: config_kinematic_case
-      integer, pointer :: config_fct_block_size
+      integer, pointer :: config_fct_tracer_chunk
 
 
       !
@@ -59,7 +59,7 @@ module mpas_atm_halos
       call mpas_pool_get_config(domain % blocklist % configs, 'config_halo_exch_method', config_halo_exch_method)
       call mpas_pool_get_config(domain % blocklist % configs, 'config_num_passive_tracers', config_num_passive_tracers)
       call mpas_pool_get_config(domain % blocklist % configs, 'config_kinematic_case', config_kinematic_case)
-      call mpas_pool_get_config(domain % blocklist % configs, 'config_fct_block_size', config_fct_block_size)
+      call mpas_pool_get_config(domain % blocklist % configs, 'config_fct_tracer_chunk', config_fct_tracer_chunk)
 
       if (trim(config_halo_exch_method) == 'mpas_dmpar') then
          call mpas_log_write('')
@@ -159,10 +159,10 @@ module mpas_atm_halos
          call mpas_dmpar_exch_group_create(domain, 'dynamics:scale')
          call mpas_dmpar_exch_group_add_field(domain, 'dynamics:scale', 'scale', timeLevel=1, haloLayers=(/1,2/))
 
-         if (config_fct_block_size > 0) then
-            call mpas_dmpar_exch_group_create(domain, 'dynamics:scale_blk')
-            call mpas_dmpar_exch_group_add_field(domain, 'dynamics:scale_blk', 'scale_in',  timeLevel=1, haloLayers=(/1,2/))
-            call mpas_dmpar_exch_group_add_field(domain, 'dynamics:scale_blk', 'scale_out', timeLevel=1, haloLayers=(/1,2/))
+         if (config_fct_tracer_chunk > 0) then
+            call mpas_dmpar_exch_group_create(domain, 'dynamics:scale_chk')
+            call mpas_dmpar_exch_group_add_field(domain, 'dynamics:scale_chk', 'scale_in',  timeLevel=1, haloLayers=(/1,2/))
+            call mpas_dmpar_exch_group_add_field(domain, 'dynamics:scale_chk', 'scale_out', timeLevel=1, haloLayers=(/1,2/))
          end if
 
          if (config_num_passive_tracers > 0) then
@@ -312,11 +312,11 @@ module mpas_atm_halos
          call mpas_halo_exch_group_add_field(domain, 'dynamics:scale', 'scale', timeLevel=1, haloLayers=(/1,2/))
          call mpas_halo_exch_group_complete(domain, 'dynamics:scale')
 
-         if (config_fct_block_size > 0) then
-            call mpas_halo_exch_group_create(domain, 'dynamics:scale_blk')
-            call mpas_halo_exch_group_add_field(domain, 'dynamics:scale_blk', 'scale_in',  timeLevel=1, haloLayers=(/1,2/))
-            call mpas_halo_exch_group_add_field(domain, 'dynamics:scale_blk', 'scale_out', timeLevel=1, haloLayers=(/1,2/))
-            call mpas_halo_exch_group_complete(domain, 'dynamics:scale_blk')
+         if (config_fct_tracer_chunk > 0) then
+            call mpas_halo_exch_group_create(domain, 'dynamics:scale_chk')
+            call mpas_halo_exch_group_add_field(domain, 'dynamics:scale_chk', 'scale_in',  timeLevel=1, haloLayers=(/1,2/))
+            call mpas_halo_exch_group_add_field(domain, 'dynamics:scale_chk', 'scale_out', timeLevel=1, haloLayers=(/1,2/))
+            call mpas_halo_exch_group_complete(domain, 'dynamics:scale_chk')
          end if
 
          if (config_num_passive_tracers > 0) then
@@ -403,13 +403,13 @@ module mpas_atm_halos
       character(len=StrKIND), pointer :: config_halo_exch_method
       integer, pointer :: config_num_passive_tracers
       character(len=StrKIND), pointer :: config_kinematic_case
-      integer, pointer :: config_fct_block_size
+      integer, pointer :: config_fct_tracer_chunk
 
 
       call mpas_pool_get_config(domain % blocklist % configs, 'config_halo_exch_method', config_halo_exch_method)
       call mpas_pool_get_config(domain % blocklist % configs, 'config_num_passive_tracers', config_num_passive_tracers)
       call mpas_pool_get_config(domain % blocklist % configs, 'config_kinematic_case', config_kinematic_case)
-      call mpas_pool_get_config(domain % blocklist % configs, 'config_fct_block_size', config_fct_block_size)
+      call mpas_pool_get_config(domain % blocklist % configs, 'config_fct_tracer_chunk', config_fct_tracer_chunk)
 
       if (trim(config_halo_exch_method) == 'mpas_dmpar') then
          !
@@ -438,8 +438,8 @@ module mpas_atm_halos
          call mpas_dmpar_exch_group_destroy(domain, 'dynamics:w')
          call mpas_dmpar_exch_group_destroy(domain, 'dynamics:scale')
 
-         if (config_fct_block_size > 0) then
-            call mpas_dmpar_exch_group_destroy(domain, 'dynamics:scale_blk')
+         if (config_fct_tracer_chunk > 0) then
+            call mpas_dmpar_exch_group_destroy(domain, 'dynamics:scale_chk')
          end if
 
          if (config_num_passive_tracers > 0) then
@@ -487,8 +487,8 @@ module mpas_atm_halos
          call mpas_halo_exch_group_destroy(domain, 'dynamics:w')
          call mpas_halo_exch_group_destroy(domain, 'dynamics:scale')
 
-         if (config_fct_block_size > 0) then
-            call mpas_halo_exch_group_destroy(domain, 'dynamics:scale_blk')
+         if (config_fct_tracer_chunk > 0) then
+            call mpas_halo_exch_group_destroy(domain, 'dynamics:scale_chk')
          end if
 
          if (config_num_passive_tracers > 0) then

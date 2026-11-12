@@ -5,7 +5,7 @@
 #
 # Usage: run_kinematic_test.sh -c <case> -m <mesh> -d <mesh_dir> [-b <exe_dir>] [-n <ranks>]
 #                              [-t <dt>] [-k <rk_order>] [-L <on|off>] [-l <nlev>] [-N <ntracers>]
-#                              [-r <duration>] [-B <fct_block_size>]
+#                              [-r <duration>] [-C <fct_tracer_chunk>]
 #                              [-i <output_interval>] [-o <run_dir>]
 #
 set -e
@@ -16,17 +16,17 @@ MPIRUN=${MPAS_MPIRUN:-mpirun -n}
 PYTHON=${PYTHON:-python3}
 
 CASE=; MESH=; MESH_DIR=; EXE_DIR=$MPAS_ROOT; NRANKS=4; DT=; RKORDER=2; LIMITER=on; NLEV=; NTRACERS=
-DURATION=; OUTPUT_INTERVAL=; RUN_DIR=; FCT_BLOCK=
+DURATION=; OUTPUT_INTERVAL=; RUN_DIR=; FCT_CHUNK=
 
 usage() { sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
-while getopts "c:m:d:b:n:t:k:L:l:N:r:i:o:B:h" opt; do
+while getopts "c:m:d:b:n:t:k:L:l:N:r:i:o:C:h" opt; do
    case $opt in
       c) CASE=$OPTARG ;;           m) MESH=$OPTARG ;;          d) MESH_DIR=$OPTARG ;;
       b) EXE_DIR=$OPTARG ;;        n) NRANKS=$OPTARG ;;        t) DT=$OPTARG ;;
       k) RKORDER=$OPTARG ;;        L) LIMITER=$OPTARG ;;
       l) NLEV=$OPTARG ;;           N) NTRACERS=$OPTARG ;;      r) DURATION=$OPTARG ;;
-      i) OUTPUT_INTERVAL=$OPTARG ;; o) RUN_DIR=$OPTARG ;;      B) FCT_BLOCK=$OPTARG ;;
+      i) OUTPUT_INTERVAL=$OPTARG ;; o) RUN_DIR=$OPTARG ;;      C) FCT_CHUNK=$OPTARG ;;
       *) usage ;;
    esac
 done
@@ -35,8 +35,8 @@ done
 [ "$RKORDER" = 2 ] || [ "$RKORDER" = 3 ] || { echo "-k must be 2 or 3"; exit 2; }
 # config_monotonic: FCT limiter on the last RK stage
 case $LIMITER in on) MONOTONIC=true ;; off) MONOTONIC=false ;; *) echo "-L must be on or off"; exit 2 ;; esac
-# config_fct_block_size: tracers per block in the FCT stage (0 = original routine); unset = not written
-[ -z "$FCT_BLOCK" ] || [[ "$FCT_BLOCK" =~ ^[0-9]+$ ]] || { echo "-B must be a non-negative integer"; exit 2; }
+# config_fct_tracer_chunk: tracers per chunk in the FCT stage (0 = original routine); unset = not written
+[ -z "$FCT_CHUNK" ] || [[ "$FCT_CHUNK" =~ ^[0-9]+$ ]] || { echo "-C must be a non-negative integer"; exit 2; }
 
 TEMPLATES=$HERE/$CASE
 [ -d "$TEMPLATES" ] || { echo "Unknown case '$CASE' (no directory $TEMPLATES)"; exit 2; }
@@ -69,7 +69,7 @@ esac
 [ -n "$DT" ] || { echo "No default time step for mesh $MESH; give one with -t"; exit 2; }
 [ -n "$NLEV" ] || { echo "No default number of levels for mesh $MESH; give one with -l"; exit 2; }
 
-RUN_DIR=${RUN_DIR:-$PWD/runs/${CASE}_${MESH}_N${NTRACERS}_rk${RKORDER}_lim${LIMITER}${FCT_BLOCK:+_B$FCT_BLOCK}}
+RUN_DIR=${RUN_DIR:-$PWD/runs/${CASE}_${MESH}_N${NTRACERS}_rk${RKORDER}_lim${LIMITER}${FCT_CHUNK:+_C$FCT_CHUNK}}
 mkdir -p "$RUN_DIR"
 RUN_DIR=$(cd "$RUN_DIR" && pwd)
 cd "$RUN_DIR"
@@ -95,13 +95,13 @@ for f in namelist.init_atmosphere streams.init_atmosphere namelist.atmosphere st
        -e "s/@CASE@/$CASE/g" "$TEMPLATES/$f" > $f
 done
 cp "$TEMPLATES/stream_list.atmosphere.output" .
-if [ -n "$FCT_BLOCK" ]; then
-   awk -v b="$FCT_BLOCK" '{ print }
-        /^ *config_num_passive_tracers *=/ { match($0, /^ */); printf "%sconfig_fct_block_size = %s\n", substr($0, 1, RLENGTH), b }' \
+if [ -n "$FCT_CHUNK" ]; then
+   awk -v b="$FCT_CHUNK" '{ print }
+        /^ *config_num_passive_tracers *=/ { match($0, /^ */); printf "%sconfig_fct_tracer_chunk = %s\n", substr($0, 1, RLENGTH), b }' \
        namelist.atmosphere > namelist.atmosphere.tmp && mv namelist.atmosphere.tmp namelist.atmosphere
 fi
 
-echo "== $CASE on $MESH: dt = $DT s, RK order $RKORDER, limiter $LIMITER, $NLEV levels, $NTRACERS tracers, $DURATION, $NRANKS ranks${FCT_BLOCK:+, FCT block $FCT_BLOCK}"
+echo "== $CASE on $MESH: dt = $DT s, RK order $RKORDER, limiter $LIMITER, $NLEV levels, $NTRACERS tracers, $DURATION, $NRANKS ranks${FCT_CHUNK:+, FCT chunk $FCT_CHUNK}"
 echo "   run directory: $RUN_DIR"
 
 $MPIRUN $NRANKS "$EXE_DIR/init_atmosphere_model" > init.stdout 2>&1 || { echo "init_atmosphere_model failed; see $RUN_DIR/init.stdout and log.init_atmosphere.*"; exit 1; }
