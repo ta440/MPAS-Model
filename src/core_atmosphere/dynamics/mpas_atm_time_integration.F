@@ -114,6 +114,35 @@ module atm_time_integration
    contains
 
 
+   !-----------------------------------------------------------------------
+   !  function atm_fct_chunk_width
+   !
+   !> \brief Width of the widest chunk of the tracer-chunked FCT
+   !> \details
+   !>  num_tracers tracers are split into ceiling(num_tracers/max_chunk)
+   !>  chunks of nearly equal size (sizes differ by at most one). Returns the
+   !>  size of the largest, which is at most max_chunk, or 0 if there are no
+   !>  tracers or chunking is off (max_chunk <= 0).
+   !
+   !-----------------------------------------------------------------------
+   pure integer function atm_fct_chunk_width(num_tracers, max_chunk)
+
+      implicit none
+
+      integer, intent(in) :: num_tracers, max_chunk
+
+      integer :: num_chunks
+
+      if (num_tracers <= 0 .or. max_chunk <= 0) then
+         atm_fct_chunk_width = 0
+      else
+         num_chunks = (num_tracers + max_chunk - 1) / max_chunk
+         atm_fct_chunk_width = (num_tracers + num_chunks - 1) / num_chunks
+      end if
+
+   end function atm_fct_chunk_width
+
+
    !***********************************************************************
    !
    !  routine mpas_atm_dynamics_checks
@@ -3025,6 +3054,7 @@ module atm_time_integration
 
       integer, pointer :: config_fct_tracer_chunk
       logical :: use_chunked_fct
+      integer :: chunk_width
       real (kind=RKIND), dimension(:,:,:), allocatable :: sold_chk, snew_chk, s_max_chk, s_min_chk
       real (kind=RKIND), dimension(:,:,:), allocatable :: wdtn_chk, flux_chk, flux_upwind_chk, flux_tmp_chk
 
@@ -3116,14 +3146,16 @@ module atm_time_integration
          end do
          !$acc end parallel
          if (use_chunked_fct) then
-            allocate(sold_chk(config_fct_tracer_chunk,nVertLevels,nCells+1))
-            allocate(snew_chk(config_fct_tracer_chunk,nVertLevels,nCells+1))
-            allocate(s_max_chk(config_fct_tracer_chunk,nVertLevels,nCells+1))
-            allocate(s_min_chk(config_fct_tracer_chunk,nVertLevels,nCells+1))
-            allocate(wdtn_chk(config_fct_tracer_chunk,nVertLevels+1,nCells+1))
-            allocate(flux_chk(config_fct_tracer_chunk,nVertLevels,nEdges+1))
-            allocate(flux_upwind_chk(config_fct_tracer_chunk,nVertLevels,nEdges+1))
-            allocate(flux_tmp_chk(config_fct_tracer_chunk,nVertLevels,nEdges+1))
+            ! work arrays as wide as the widest (balanced) chunk of this group, not config_fct_tracer_chunk
+            chunk_width = max(1, atm_fct_chunk_width(num_scalars, config_fct_tracer_chunk))
+            allocate(sold_chk(chunk_width,nVertLevels,nCells+1))
+            allocate(snew_chk(chunk_width,nVertLevels,nCells+1))
+            allocate(s_max_chk(chunk_width,nVertLevels,nCells+1))
+            allocate(s_min_chk(chunk_width,nVertLevels,nCells+1))
+            allocate(wdtn_chk(chunk_width,nVertLevels+1,nCells+1))
+            allocate(flux_chk(chunk_width,nVertLevels,nEdges+1))
+            allocate(flux_upwind_chk(chunk_width,nVertLevels,nEdges+1))
+            allocate(flux_tmp_chk(chunk_width,nVertLevels,nEdges+1))
             sold_chk(:,:,nCells+1) = 0.0_RKIND
             snew_chk(:,:,nCells+1) = 0.0_RKIND
             s_max_chk(:,:,nCells+1) = 0.0_RKIND
@@ -3154,7 +3186,7 @@ module atm_time_integration
                                           cellThreadStart(thread), cellThreadEnd(thread), &
                                           edgeThreadStart(thread), edgeThreadEnd(thread), &
                                           cellSolveThreadStart(thread), cellSolveThreadEnd(thread), &
-                                          config_fct_tracer_chunk, &
+                                          config_fct_tracer_chunk, chunk_width, &
                                           sold_chk, snew_chk, s_max_chk, s_min_chk, wdtn_chk, &
                                           flux_chk, flux_upwind_chk, flux_tmp_chk, config_gpu_aware_mpi, &
                                           exchange_halo_group, &
@@ -5908,12 +5940,13 @@ module atm_time_integration
    !> \details
    !>  Same role as atm_advance_scalars_mono: dereferences the fields that the
    !>  work routine needs. Used when config_fct_tracer_chunk > 0. The work arrays
-   !>  carry a leading tracer-chunk dimension of size chunk_size.
+   !>  carry a leading tracer-chunk dimension of size chunk_width, the widest of
+   !>  the ceiling(num_scalars/max_chunk) balanced chunks.
    !
    !-----------------------------------------------------------------------
    subroutine atm_advance_scalars_mono_chunked(field_name, block, tend, state, diag, mesh, halo_scratch, configs, dt, &
                                        cellStart, cellEnd, edgeStart, edgeEnd, &
-                                       cellSolveStart, cellSolveEnd, chunk_size, &
+                                       cellSolveStart, cellSolveEnd, max_chunk, chunk_width, &
                                        sold_chk, snew_chk, s_max_chk, s_min_chk, wdtn_chk, flux_chk, &
                                        flux_upwind_chk, flux_tmp_chk, config_gpu_aware_mpi, exchange_halo_group, &
                                        advance_density, rho_zz_int)
@@ -5932,7 +5965,7 @@ module atm_time_integration
       real (kind=RKIND), intent(in)        :: dt
       integer, intent(in) :: cellStart, cellEnd, edgeStart, edgeEnd
       integer, intent(in) :: cellSolveStart, cellSolveEnd
-      integer, intent(in) :: chunk_size
+      integer, intent(in) :: max_chunk, chunk_width
       real (kind=RKIND), dimension(:,:,:), intent(inout) :: sold_chk, snew_chk
       real (kind=RKIND), dimension(:,:,:), intent(inout) :: s_max_chk, s_min_chk
       real (kind=RKIND), dimension(:,:,:), intent(inout) :: wdtn_chk
@@ -6015,7 +6048,15 @@ module atm_time_integration
       call mpas_pool_get_array(halo_scratch, 'scale_in', scale_in_arr)
       call mpas_pool_get_array(halo_scratch, 'scale_out', scale_out_arr)
 
-      call atm_advance_scalars_mono_chunked_work(block, nCells, nEdges, num_scalars, chunk_size, dt, &
+      ! The scale-factor fields are as wide as the widest chunk of any group (dimension
+      ! fct_chunk_width, set in atm_setup_block), so at least as wide as this group's chunks
+      if (size(scale_in_arr,1) < chunk_width) then
+         call mpas_log_write('Tracer-chunked FCT: scale_in has width $i, less than the chunk width $i', &
+                             intArgs=[size(scale_in_arr,1), chunk_width], messageType=MPAS_LOG_CRIT)
+      end if
+
+      call atm_advance_scalars_mono_chunked_work(block, nCells, nEdges, num_scalars, max_chunk, chunk_width, &
+                                   size(scale_in_arr,1), dt, &
                                    cellStart, cellEnd, edgeStart, edgeEnd, &
                                    cellSolveStart, cellSolveEnd, &
                                    coef_3rd_order, nCellsSolve, uhAvg, wwAvg, scalar_tend, rho_zz_old, &
@@ -6040,7 +6081,8 @@ module atm_time_integration
    !>  A reordering of atm_advance_scalars_mono_work. The arithmetic applied to
    !>  each tracer is the same, term by term and in the same order. Differences:
    !>
-   !>   - Tracers are processed in chunks of up to chunk_size, with the tracer
+   !>   - Tracers are processed in ceiling(num_scalars/max_chunk) chunks of
+   !>     nearly equal size (at most chunk_width <= max_chunk), with the tracer
    !>     index innermost in every loop nest (loop order iCell or iEdge, then k,
    !>     then the tracer within the block, iS).
    !>   - Quantities that depend only on the wind and the mesh (upwind
@@ -6048,13 +6090,14 @@ module atm_time_integration
    !>     edge and level and shared by all tracers in the chunk.
    !>   - The scale factors of all tracers in a chunk are exchanged in one halo
    !>     exchange (group 'dynamics:scale_chk'), so there are
-   !>     ceiling(num_scalars/chunk_size) exchanges per call, not num_scalars.
+   !>     ceiling(num_scalars/max_chunk) exchanges per call, not num_scalars.
    !>
    !>  OpenACC directives are not included yet; the wrapper stops in OpenACC
    !>  builds. The DEBUG_TRANSPORT diagnostics of the original are not included.
    !
    !-----------------------------------------------------------------------
-   subroutine atm_advance_scalars_mono_chunked_work(block, nCells, nEdges, num_scalars, chunk_size, dt, &
+   subroutine atm_advance_scalars_mono_chunked_work(block, nCells, nEdges, num_scalars, max_chunk, chunk_width, &
+                                   scale_width, dt, &
                                    cellStart, cellEnd, edgeStart, edgeEnd, &
                                    cellSolveStart, cellSolveEnd, &
                                    coef_3rd_order, nCellsSolve, uhAvg, wwAvg, scalar_tend, rho_zz_old, &
@@ -6073,7 +6116,9 @@ module atm_time_integration
       integer, intent(in)                  :: nCells           ! for allocating stack variables
       integer, intent(in)                  :: nEdges           ! for allocating stack variables
       integer, intent(in)                  :: num_scalars
-      integer, intent(in)                  :: chunk_size
+      integer, intent(in)                  :: max_chunk        ! at most this many tracers per chunk
+      integer, intent(in)                  :: chunk_width      ! leading dimension of the work arrays
+      integer, intent(in)                  :: scale_width      ! leading dimension of scale_in, scale_out
       real (kind=RKIND), intent(in)        :: dt
       integer, intent(in) :: cellStart, cellEnd, edgeStart, edgeEnd
       integer, intent(in) :: cellSolveStart, cellSolveEnd
@@ -6098,12 +6143,12 @@ module atm_time_integration
       real (kind=RKIND), dimension(num_scalars,nVertLevels,nCells+1), intent(inout) :: scalars_old, scalars_new
 
       ! Work arrays: leading dimension is the tracer within the chunk
-      real (kind=RKIND), dimension(chunk_size,nVertLevels,nCells+1), intent(inout) :: sold, snew
-      real (kind=RKIND), dimension(chunk_size,nVertLevels,nCells+1), intent(inout) :: s_max, s_min
-      real (kind=RKIND), dimension(chunk_size,nVertLevels+1,nCells+1), intent(inout) :: wdtn
-      real (kind=RKIND), dimension(chunk_size,nVertLevels,nCells+1), intent(inout) :: scale_in, scale_out
-      real (kind=RKIND), dimension(chunk_size,nVertLevels,nEdges+1), intent(inout) :: flux_arr
-      real (kind=RKIND), dimension(chunk_size,nVertLevels,nEdges+1), intent(inout) :: flux_upwind_tmp, flux_tmp
+      real (kind=RKIND), dimension(chunk_width,nVertLevels,nCells+1), intent(inout) :: sold, snew
+      real (kind=RKIND), dimension(chunk_width,nVertLevels,nCells+1), intent(inout) :: s_max, s_min
+      real (kind=RKIND), dimension(chunk_width,nVertLevels+1,nCells+1), intent(inout) :: wdtn
+      real (kind=RKIND), dimension(scale_width,nVertLevels,nCells+1), intent(inout) :: scale_in, scale_out
+      real (kind=RKIND), dimension(chunk_width,nVertLevels,nEdges+1), intent(inout) :: flux_arr
+      real (kind=RKIND), dimension(chunk_width,nVertLevels,nEdges+1), intent(inout) :: flux_upwind_tmp, flux_tmp
 
       integer, intent(in) :: nCellsSolve
 
@@ -6117,11 +6162,11 @@ module atm_time_integration
       real (kind=RKIND), dimension(10,2) :: swa
 
       integer :: i, iCell, iEdge, k, iScalar, cell1, cell2
-      integer :: iS, iS0, nb
+      integer :: iS, iS0, nb, iChunk, num_chunks
       integer :: c1, c2, c3, c4, c5, c6
       real (kind=RKIND) :: flux, scalar_weight
 
-      real (kind=RKIND), dimension(chunk_size,nVertLevels) :: flux_upwind_arr
+      real (kind=RKIND), dimension(chunk_width,nVertLevels) :: flux_upwind_arr
       real (kind=RKIND) :: flux3, flux4, flux_upwind
       real (kind=RKIND) :: q_im2, q_im1, q_i, q_ip1, ua, coef3
       real (kind=RKIND) :: scale_factor
@@ -6198,11 +6243,16 @@ module atm_time_integration
       end if
 
       !
-      ! Loop over blocks of tracers: iS0 is the offset of the block, nb its size
+      ! Loop over chunks of tracers: iS0 is the offset of the chunk, nb its size. The tracers
+      ! are split into ceiling(num_scalars/max_chunk) chunks of nearly equal size: the first
+      ! mod(num_scalars,num_chunks) chunks have one tracer more than the rest
       !
-      do iS0 = 0, num_scalars-1, chunk_size
+      num_chunks = (num_scalars + max_chunk - 1) / max_chunk
+      iS0 = 0
+      do iChunk = 1, num_chunks
 
-         nb = min(chunk_size, num_scalars - iS0)
+         nb = num_scalars / num_chunks
+         if (iChunk <= mod(num_scalars, num_chunks)) nb = nb + 1
 
          !
          ! Copy the chunk into the work arrays (contiguous: nb consecutive tracers)
@@ -6495,7 +6545,8 @@ module atm_time_integration
 
          !
          !  communicate the scale factors of all tracers in the chunk: one exchange per chunk
-         !  (when nb < chunk_size the unused entries nb+1:chunk_size are also sent but never read)
+         !  (when nb < scale_width the unused entries nb+1:scale_width are also sent but never read;
+         !  scale_width is the widest chunk over all transported groups)
          !
 !$OMP BARRIER
 !$OMP MASTER
@@ -6607,6 +6658,8 @@ module atm_time_integration
                end do
             end if
          end do
+
+         iS0 = iS0 + nb
 
       end do !  loop over chunks of tracers
 

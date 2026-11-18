@@ -465,6 +465,7 @@ module atm_core_interface
       use mpas_pool_routines, only : mpas_pool_get_config
       use mpas_pool_routines, only : mpas_pool_get_subpool, mpas_pool_add_dimension
       use mpas_log, only : mpas_log_write
+      use atm_time_integration, only : atm_fct_chunk_width
 
       implicit none
 
@@ -474,6 +475,9 @@ module atm_core_interface
       integer, pointer :: cam_pcnst
       integer :: err_level
       integer, pointer :: config_num_passive_tracers
+      integer, pointer :: config_fct_tracer_chunk
+      integer, pointer :: num_scalars
+      integer :: chunk_width
       type (mpas_pool_type), pointer :: statePool
 
       ierr = 0
@@ -489,6 +493,29 @@ module atm_core_interface
       call mpas_pool_get_config(block % domain % configs, 'config_num_passive_tracers', config_num_passive_tracers)
       call mpas_pool_get_subpool(block % structs, 'state', statePool)
       call mpas_pool_add_dimension(statePool, 'num_passive_tracers', config_num_passive_tracers)
+
+      !
+      ! Width of the scale-factor fields of the tracer-chunked FCT (scale_in, scale_out): the
+      ! widest balanced chunk over the transported groups ('scalars' and 'passive_tracers'), so
+      ! that the halo exchange of these fields carries no unused entries for the widest group.
+      ! Setting the dimension here takes precedence over its Registry definition (the namelist
+      ! value, used only if num_scalars is not yet known, as when MPAS-A is a dycore in CAM)
+      !
+      call mpas_pool_get_config(block % domain % configs, 'config_fct_tracer_chunk', config_fct_tracer_chunk)
+      if (config_fct_tracer_chunk > 0) then
+         nullify(num_scalars)
+         err_level = mpas_pool_get_error_level()
+         call mpas_pool_set_error_level(MPAS_POOL_SILENT)
+         call mpas_pool_get_dimension(statePool, 'num_scalars', num_scalars)
+         call mpas_pool_set_error_level(err_level)
+         if (associated(num_scalars)) then
+            chunk_width = max(1, atm_fct_chunk_width(num_scalars, config_fct_tracer_chunk), &
+                                 atm_fct_chunk_width(config_num_passive_tracers, config_fct_tracer_chunk))
+            call mpas_pool_add_dimension(block % dimensions, 'fct_chunk_width', chunk_width)
+            call mpas_log_write('Tracer-chunked FCT: at most $i tracers per chunk; widest chunk $i tracers', &
+                                intArgs=[config_fct_tracer_chunk, chunk_width])
+         end if
+      end if
 
       !
       ! When MPAS-A is operating as a dycore in CAM, the scalars/scalars_tend var_arrays are
